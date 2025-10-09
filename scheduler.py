@@ -949,7 +949,7 @@ def schedule_with_ortools_full_modular(
     # 6. Solve the model
     # -----------------------------------------------------
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 200
+    solver.parameters.max_time_in_seconds = 30
     solver.parameters.random_seed = 42
     solver.parameters.num_search_workers = 8
     solver.parameters.search_branching = cp_model.PORTFOLIO_SEARCH
