@@ -7,33 +7,33 @@ from openpyxl.utils import get_column_letter
 # Save Schedule DataFrame
 # -------------------------
 def save_schedule_as_excel(df, output_path="Schedule.xlsx"):
-    """Save schedule DataFrame to Excel with Times New Roman styling, weekend highlights, and ER sections paired."""
+    """Save schedule DataFrame to Excel with Times New Roman styling, weekend highlights, and er sections paired."""
 
     # -------------------------
-    # Reorder columns: make ER sections Day/Night pairs and move WR last
+    # Reorder columns: make er sections day/Night pairs and move wr last
     # -------------------------
     day_night_cols = []
-    section_prefixes = ['ER-1', 'ER-2', 'EW']  # adjust as needed
+    section_prefixes = ['er-1', 'er-2', 'ew']  # adjust as needed
     for sec in section_prefixes:
-        day_col = f"{sec} Day"
-        night_col = f"{sec} Night"
+        day_col = f"{sec} day"
+        night_col = f"{sec} night"
         if day_col in df.columns:
             day_night_cols.append(day_col)
         if night_col in df.columns:
             day_night_cols.append(night_col)
 
     # Keep other columns
-    other_cols = [c for c in df.columns if c not in day_night_cols + ['WR']]
-    # Reorder: other columns + day/night pairs + WR at the end
-    df = df[other_cols + day_night_cols + ['WR']]
+    other_cols = [c for c in df.columns if c not in day_night_cols + ['wr']]
+    # Reorder: other columns + day/night pairs + wr at the end
+    df = df[other_cols + day_night_cols + ['wr']]
 
-    # Convert 'Date' column to readable format
-    if 'Date' in df.columns:
-        df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.strftime('%d-%b')
+    # Convert 'date' column to readable format
+    if 'date' in df.columns:
+        df['date'] = pd.to_datetime(df['date'], errors='coerce').dt.strftime('%d-%b')
 
-    # Add WR column: mark EW Day if Friday
-    if 'Day' in df.columns and 'EW Day' in df.columns:
-        df['WR'] = df.apply(lambda row: row['EW Day'] if row['Day'] == 'Fri' else '', axis=1)
+    # Add wr column: mark ew day if Friday
+    if 'day' in df.columns and 'ew day' in df.columns:
+        df['wr'] = df.apply(lambda row: row['ew day'] if row['day'] == 'Fri' else '', axis=1)
 
     df.to_excel(output_path, index=False, sheet_name='Schedule')
     wb = load_workbook(output_path)
@@ -42,9 +42,9 @@ def save_schedule_as_excel(df, output_path="Schedule.xlsx"):
     # -------------------------
     # Colors
     # -------------------------
-    section_colors = {'ER-1': 'FFF2CC', 'ER-2': 'F4CCCC', 'EW': 'D9D2E9'}
+    section_colors = {'er-1': 'FFF2CC', 'er-2': 'F4CCCC', 'ew': 'D9D2E9'}
     neon_yellow = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')  # weekends
-    light_blue = PatternFill(start_color='CFE2F3', end_color='CFE2F3', fill_type='solid')  # WR
+    light_blue = PatternFill(start_color='CFE2F3', end_color='CFE2F3', fill_type='solid')  # wr
     header_fill = PatternFill(start_color='D9EAD3', end_color='D9EAD3', fill_type='solid')
 
     thin_border = Border(left=Side(style='thin'), right=Side(style='thin'),
@@ -66,7 +66,7 @@ def save_schedule_as_excel(df, output_path="Schedule.xlsx"):
     # Style data rows
     # -------------------------
     for row in ws.iter_rows(min_row=2, max_row=len(df)+1, min_col=1, max_col=len(df.columns)):
-        day_value = row[1].value  # Day column (assume 2nd col)
+        day_value = row[1].value  # day column (assume 2nd col)
         is_weekend = day_value in ['Fri', 'Sat']
 
         for cell in row:
@@ -79,8 +79,8 @@ def save_schedule_as_excel(df, output_path="Schedule.xlsx"):
                     break
 
             if is_weekend:
-                # Highlight weekends: WR column in light blue, others in neon yellow
-                cell.fill = light_blue if col_name == 'WR' else neon_yellow
+                # Highlight weekends: wr column in light blue, others in neon yellow
+                cell.fill = light_blue if col_name == 'wr' else neon_yellow
             elif section:
                 cell.fill = PatternFill(start_color=section_colors[section],
                                         end_color=section_colors[section],
@@ -96,9 +96,9 @@ def save_schedule_as_excel(df, output_path="Schedule.xlsx"):
     for i, col_cells in enumerate(ws.columns, start=1):
         max_length = max(len(str(c.value)) if c.value else 0 for c in col_cells)
         header = col_cells[0].value
-        if header == "Date":
+        if header == "date":
             width = 10
-        elif header == "Day":
+        elif header == "day":
             width = 8
         else:
             width = min(max_length + 6, 25)
@@ -156,8 +156,8 @@ def save_score_as_excel(df, output_path="Score.xlsx"):
         return f"FF{r:02X}{g:02X}00"
 
     # Apply gradient to Score column
-    if 'Score' in df.columns and 'Max_Points' in df.columns:
-        score_col_idx = original_columns.index('Score') + 1
+    if 'score' in df.columns and 'max_points' in df.columns:
+        score_col_idx = original_columns.index('score') + 1
         for row_idx, row in enumerate(df.itertuples(index=False), start=2):
             score_val = row.Score
             max_val = row.Max_Points
@@ -169,8 +169,8 @@ def save_score_as_excel(df, output_path="Score.xlsx"):
             cell.border = thin_border
 
     # Apply gradient to Total Shifts column
-    if 'Total_Shifts' in df.columns and 'Max_Shifts' in df.columns:
-        shifts_col_idx = original_columns.index('Total Shifts') + 1
+    if 'total_Shifts' in df.columns and 'max_Shifts' in df.columns:
+        shifts_col_idx = original_columns.index('total shifts') + 1
         for row_idx, row in enumerate(df.itertuples(index=False), start=2):
             shifts_val = row.Total_Shifts
             max_val = row.Max_Shifts

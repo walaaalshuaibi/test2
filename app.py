@@ -1,3 +1,5 @@
+# run streamlit code: streamlit run app.py
+
 # app.py
 import streamlit as st
 import pandas as pd
@@ -37,15 +39,23 @@ def build_constraints_from_session():
 
     for _, row in df.iterrows():
         r, ctype, val = row["Resident"], row["Type"], row["Value"]
+
         if ctype == "Max Shifts":
             limited_shift_residents[r] = int(val)
-        elif ctype == "Off Day":
-            off_rows.append({"Resident": r, "Date": pd.to_datetime(val).normalize()})
-        elif ctype == "On Day":
-            on_rows.append({"Resident": r, "Date": pd.to_datetime(val).normalize()})
+
+        elif ctype in ["Off Day", "On Day"]:
+            # Ensure val is a single Timestamp
+            val_date = pd.to_datetime(val)
+            val_date = val_date.normalize()  # zero the time component
+
+            if ctype == "Off Day":
+                off_rows.append({"Resident": r, "Date": val_date})
+            else:
+                on_rows.append({"Resident": r, "Date": val_date})
 
     off_days = pd.DataFrame(off_rows) if off_rows else None
     on_days = pd.DataFrame(on_rows) if on_rows else None
+
     return limited_shift_residents or None, off_days, on_days
 
 # =========================================================
@@ -113,28 +123,47 @@ with tab2:
         start_date = st.date_input("Select start date", value=date.today())
         num_weeks = st.number_input("Number of weeks to schedule", min_value=1, step=1, value=4)
 
+        st.divider()
+        st.subheader("🧠 Night Float (NF) Limits")
+        nf_shift_max = st.number_input("Max NF Shifts", min_value=0, step=1, value=1)
+        nf_points_max = st.number_input("Max NF Points", min_value=0, step=1, value=1)
+        nf_weekend_max = st.number_input("Max NF Weekends", min_value=0, step=1, value=0)
+
+        nf_max_limit = (nf_shift_max, nf_points_max, nf_weekend_max)
+
+        st.divider()
+        st.subheader("👤 Regular Resident Limits")
+        res_shift_max = st.number_input("Max Shifts", min_value=0, step=1, value=5)
+        res_points_max = st.number_input("Max Points", min_value=0, step=1, value=6)
+        res_weekend_max = st.number_input("Max Weekend Shifts", min_value=0, step=1, value=2)
+
+        resident_max_limit = (res_shift_max, res_points_max, res_weekend_max)
+    
+
+        st.divider()
+
         if st.button("Run Scheduler 🚀"):
             with st.spinner("Scheduling in progress..."):
                 try:
                     limited_shift_residents, off_days, on_days = build_constraints_from_session()
-                    schedule_df ,scores_df = schedule_with_ortools_full_modular(
-                    st.session_state["residents_df"],         
-                    start_date,
-                    num_weeks,
-                    limited_shift_residents=limited_shift_residents,
-                    off_days=off_days,
-                    on_days=on_days
+
+                    schedule_df, scores_df = schedule_with_ortools_full_modular(
+                        st.session_state["residents_df"],
+                        start_date,
+                        num_weeks,
+                        limited_shift_residents=limited_shift_residents,
+                        off_days=off_days,
+                        on_days=on_days,
+                        nf_max_limit=nf_max_limit,
+                        resident_max_limit=resident_max_limit
                     )
 
-                    # Save results to session_state (to prevent reruns)
                     st.session_state["schedule_df"] = schedule_df
                     st.session_state["scores_df"] = scores_df
                     st.success("✅ Scheduling completed successfully!")
 
                 except Exception as e:
                     st.error(f"❌ Scheduling error: {e}")
-                    
-                    # Show detailed traceback
                     st.text("Traceback (most recent call last):")
                     st.text(traceback.format_exc())
 
