@@ -2,7 +2,7 @@ import pandas as pd
 import helper
 
 # -----------------------------------------------------
-def prepare_data(residents_df, start_date, num_weeks=4):
+def prepare_data(residents_df, start_date, num_weeks, resident_year):
     """ 
     Prepare scheduling inputs from the residents DataFrame. 
     """
@@ -56,26 +56,47 @@ def prepare_data(residents_df, start_date, num_weeks=4):
                 helper.update_blackout(resident_name, dates, vacation_blackout, buffer_days=buffer, record_list=vacation_records)
         
         # Weekend rounds blackout
-        if str(row["weekend round"]).strip().lower() != "no":
-            for rng in row['weekend round'].split("\n"):
-                dates = helper.expand_dates(rng, base_year=start_date.year)
-                if not dates:
-                    continue
-                wr_date_ts = pd.Timestamp(dates[0]).normalize()
-                
-                # Add WR blackout (±2 days excluding the WR date)
-                helper.update_blackout(
-                    resident_name, 
-                    [wr_date_ts], 
-                    wr_blackout, 
-                    buffer_days=2, 
-                    exclude_dates={wr_date_ts}, 
-                    record_list=weekend_rounds_records
-                )
-                
-                # Remove WR date from all blackout dicts so it can be assigned
-                for b in [nf_blackout, vacation_blackout, wr_blackout]:
-                    b[resident_name].discard(wr_date_ts)
+        # Initialize a tracker outside the loop
+        range_assignment_tracker = {}
+
+        for _, row in residents_df.iterrows():
+            resident_name = row['name']
+
+            if str(row["weekend round"]).strip().lower() != "no":
+                for rng in row["weekend round"].split("\n"):
+                    dates = helper.expand_dates(rng, base_year=start_date.year)
+                    if not dates:
+                        continue
+                    dates = [pd.Timestamp(d).normalize() for d in sorted(dates)]
+
+                    if resident_year.lower() == "senior":
+                        wr_date_ts = dates[0]  # seniors always take first
+                    else:
+                        # Initialize tracker for this range if needed
+                        if rng not in range_assignment_tracker:
+                            range_assignment_tracker[rng] = 0
+
+                        # Assign next available date
+                        idx = range_assignment_tracker[rng]
+                        wr_date_ts = dates[idx % len(dates)]
+
+                        # Update tracker
+                        range_assignment_tracker[rng] += 1
+
+                    # Add WR blackout
+                    helper.update_blackout(
+                        resident_name,
+                        [wr_date_ts],
+                        wr_blackout,
+                        buffer_days=2,
+                        exclude_dates={wr_date_ts},
+                        record_list=weekend_rounds_records
+                    )
+
+                    # Remove assigned WR date from all blackout dicts
+                    for b in [nf_blackout, vacation_blackout, wr_blackout]:
+                        b[resident_name].discard(wr_date_ts)
+
     
     vacation_df = pd.DataFrame(vacation_records)
     weekend_rounds_df = pd.DataFrame(weekend_rounds_records)
@@ -99,7 +120,7 @@ def prepare_data(residents_df, start_date, num_weeks=4):
         nf_cols=nf_roles
     )
     
-    # NS blackout (1 day before and after)
+    # NS blackout (2 day before and after)
     ns_blackout = {resident_name: set() for resident_name in residents}
     
     if ns_residents is not None and not ns_residents.empty:
@@ -108,7 +129,7 @@ def prepare_data(residents_df, start_date, num_weeks=4):
             ns_date = pd.to_datetime(row["date"])
             helper.update_blackout(resident_name, [ns_date], ns_blackout, buffer_days=2)
 
-        # --- NEW: Extended NF blackout logic ---
+        # --- Extended NF blackout logic ---
     for _, row in ns_residents.iterrows():
         resident_name = row["resident"]
         ns_date = pd.to_datetime(row["date"])

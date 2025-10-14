@@ -58,7 +58,7 @@ def add_weekend_rounds_constraint(model, assign, roles, weekend_rounds_df):
     """
     
     # Ensure 'Date' column is in datetime format
-    weekend_rounds_df['date'] = pd.to_datetime(weekend_rounds_df['date'])
+    weekend_rounds_df['date'] = pd.to_datetime(weekend_rounds_df['date']).dt.normalize()
     
     # Iterate through each weekend round assignment
     for _, row in weekend_rounds_df.iterrows():

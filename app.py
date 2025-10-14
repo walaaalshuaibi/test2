@@ -21,7 +21,7 @@ if "residents_df" not in st.session_state:
     st.session_state["residents_df"] = pd.DataFrame()
 
 if "constraints" not in st.session_state:
-    st.session_state["constraints"] = pd.DataFrame(columns=["Resident", "Type", "Value"])
+    st.session_state["constraints"] = pd.DataFrame(columns=["resident", "type", "value"])
 
 if "schedule_df" not in st.session_state:
     st.session_state["schedule_df"] = None
@@ -38,20 +38,20 @@ def build_constraints_from_session():
     off_rows, on_rows = [], []
 
     for _, row in df.iterrows():
-        r, ctype, val = row["Resident"], row["Type"], row["Value"]
+        r, ctype, val = row["resident"], row["type"], row["value"]
 
-        if ctype == "Max Shifts":
+        if ctype == "max shifts":
             limited_shift_residents[r] = int(val)
 
-        elif ctype in ["Off Day", "On Day"]:
+        elif ctype in ["off day", "on day"]:
             # Ensure val is a single Timestamp
             val_date = pd.to_datetime(val)
             val_date = val_date.normalize()  # zero the time component
 
-            if ctype == "Off Day":
-                off_rows.append({"Resident": r, "Date": val_date})
+            if ctype == "off day":
+                off_rows.append({"resident": r, "date": val_date})
             else:
-                on_rows.append({"Resident": r, "Date": val_date})
+                on_rows.append({"resident": r, "date": val_date})
 
     off_days = pd.DataFrame(off_rows) if off_rows else None
     on_days = pd.DataFrame(on_rows) if on_rows else None
@@ -79,9 +79,9 @@ with tab1:
 
         resident_list = st.session_state["residents_df"]["Name"].dropna().tolist()
         selected_resident = st.selectbox("Select Resident", resident_list)
-        constraint_type = st.selectbox("Constraint Type", ["Off Day", "On Day", "Max Shifts"])
+        constraint_type = st.selectbox("Constraint Type", ["off day", "on day", "max shifts"])
 
-        if constraint_type in ["Off Day", "On Day"]:
+        if constraint_type in ["off day", "on day"]:
             constraint_value = st.date_input("Select Date", value=date.today())
         else:  # Max Shifts
             constraint_value = st.number_input("Enter Max Shifts", min_value=1, step=1)
@@ -89,7 +89,7 @@ with tab1:
         if st.button("Add Constraint"):
             new_constraint = pd.DataFrame(
                 [[selected_resident, constraint_type, constraint_value]],
-                columns=["Resident", "Type", "Value"],
+                columns=["resident", "type", "value"],
             )
             st.session_state["constraints"] = pd.concat(
                 [st.session_state["constraints"], new_constraint], ignore_index=True
@@ -123,6 +123,9 @@ with tab2:
         start_date = st.date_input("Select start date", value=date.today())
         num_weeks = st.number_input("Number of weeks to schedule", min_value=1, step=1, value=4)
 
+        st.subheader("👤 Resident Year")
+        resident_year = st.selectbox("Select Resident Year for this schedule", ["Senior", "R1"])
+
         st.divider()
         st.subheader("🧠 Night Float (NF) Limits")
         nf_shift_max = st.number_input("Max NF Shifts", min_value=0, step=1, value=1)
@@ -155,7 +158,8 @@ with tab2:
                         off_days=off_days,
                         on_days=on_days,
                         nf_max_limit=nf_max_limit,
-                        resident_max_limit=resident_max_limit
+                        resident_max_limit=resident_max_limit,
+                        resident_year=resident_year
                     )
 
                     st.session_state["schedule_df"] = schedule_df

@@ -68,7 +68,8 @@ def extract_schedule(
     score_vars, 
     max_shifts, 
     max_points, 
-    nf_calendar_df
+    nf_calendar_df,
+    resident_year
 ):
     """ 
     Extract the solved schedule and compute per-resident scores. 
@@ -112,19 +113,24 @@ def extract_schedule(
     
     # Add WR (Weekend Round) column if EW Day exists
     if 'day' in schedule_df.columns and 'ew day' in schedule_df.columns:
-        schedule_df['wr'] = schedule_df.apply(
-            lambda row: row['ew day'] if row['day'] == 'Fri' else '', 
-            axis=1
-        )
+        weekend_days = {'Fri', 'Sat'}
+
+        if resident_year.lower() == "senior":
+            schedule_df['wr'] = schedule_df.apply(
+                lambda row: row['ew day'] if row['day'] == 'Fri' else '', 
+                axis=1
+            )
+        else: 
+            schedule_df['wr'] = schedule_df.apply(
+                lambda row: row['ew day'] if row['day'] in weekend_days else '', 
+                axis=1
+            )
+
         # --- Count how many WRs each resident has ---
-        wr_counts = (
-            schedule_df['wr']
-            .value_counts()
-            .to_dict()
-        )
+        wr_counts = schedule_df['wr'].value_counts().to_dict()
     else:
         wr_counts = {r: 0 for r in residents}
-    
+
     # Build per-resident summary (scores_df)
     scores_df = pd.DataFrame([{
         "Resident": r,

@@ -4,7 +4,7 @@ def calculate_max_limits(residents, nf_residents, wr_residents, night_counts, re
     """
     max_shifts, max_points, weekend_limits = {}, {}, {}
 
-    for resident in residents:      # WIP dynamic max
+    for resident in residents:    
         if resident in nf_residents:        # night floaters
             shifts, points, weekend = (nf_max_limit)
         else: 

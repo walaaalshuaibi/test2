@@ -23,7 +23,8 @@ def schedule_with_ortools_full_modular(
     off_days, 
     on_days, 
     resident_max_limit, 
-    nf_max_limit
+    nf_max_limit,
+    resident_year
 ):
     """ 
     Build and solve a resident scheduling problem using OR-Tools CP-SAT. 
@@ -56,7 +57,7 @@ def schedule_with_ortools_full_modular(
         weekend_rounds_df, 
         ns_residents, 
         nf_calendar_df
-    ) = preprocess_data.prepare_data(residents_df, start_date, num_weeks)
+    ) = preprocess_data.prepare_data(residents_df, start_date, num_weeks, resident_year)
     
     # Per-resident caps
     max_shifts, max_points, weekend_limits = max_limits.calculate_max_limits(
@@ -76,7 +77,7 @@ def schedule_with_ortools_full_modular(
     # -----------------------------------------------------
     # 2. Define model and decision variables
     # -----------------------------------------------------
-    
+  
     model = cp_model.CpModel()
     
     # Binary variable: assign[d, role, r] = 1 if resident r works role on day d
@@ -173,9 +174,6 @@ def schedule_with_ortools_full_modular(
         nf_residents,
         weight=3
     )
-
-
-
     
     # -----------------------------------------------------
     # 5. Fairness scoring + objective
@@ -247,6 +245,7 @@ def schedule_with_ortools_full_modular(
         score_vars, 
         max_shifts, 
         max_points, 
-        nf_calendar_df
+        nf_calendar_df,
+        resident_year
     )
 
