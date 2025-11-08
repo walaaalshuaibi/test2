@@ -2,10 +2,11 @@ import pandas as pd
 import random
 from ortools.sat.python import cp_model
 import preprocess_data
-import max_limits
 import objective
-import penalty
-import constraints
+import general
+import helper
+import wr
+import nf
 
 def build_weekend_groups(days):
     days_sorted = sorted(days)
@@ -16,15 +17,21 @@ def build_weekend_groups(days):
     ]
 
 def schedule_with_ortools_full_modular(
-    residents_df, 
-    start_date, 
-    num_weeks, 
-    limited_shift_residents, 
-    off_days, 
-    on_days, 
-    resident_max_limit, 
+    residents_df,
+    start_date,
+    num_weeks,
+    limited_shift_residents,
+    off_days,
+    on_days,
+    resident_max_limit,
     nf_max_limit,
-    resident_year
+    resident_year,
+    buffers,
+    r2_cover,
+    optional_rules=None,
+    max_consecutive_days=3,
+    preassigned_ns_df=None,
+    preassigned_wr_df=None
 ):
     """ 
     Build and solve a resident scheduling problem using OR-Tools CP-SAT. 
@@ -38,53 +45,88 @@ def schedule_with_ortools_full_modular(
     # -----------------------------------------------------
     
     residents_df.columns = residents_df.columns.str.strip().str.lower()
-    
-    (
-        residents, 
-        resident_level, 
-        roles, 
-        days, 
-        weekend_days, 
-        nf_residents, 
-        non_nf_residents, 
-        wr_residents, 
-        nf_blackout, 
-        wr_blackout, 
-        ns_blackout, 
-        vacation_blackout, 
-        night_counts, 
-        vacation_df, 
-        weekend_rounds_df, 
-        ns_residents, 
-        nf_calendar_df
-    ) = preprocess_data.prepare_data(residents_df, start_date, num_weeks, resident_year)
-    
-    # Per-resident caps
-    max_shifts, max_points, weekend_limits = max_limits.calculate_max_limits(
-        residents, 
-        nf_residents, 
-        wr_residents, 
+
+    shifts_limit, points_limit = resident_max_limit[:2]
+    resident_max_limit = resident_max_limit + (points_limit - shifts_limit,)
+
+    shifts_limit, points_limit = nf_max_limit[:2]
+    nf_max_limit = nf_max_limit + (points_limit - shifts_limit,)
+
+    # Identify duplicates based on resident "name" column (or all columns if you prefer)
+    duplicates = residents_df[residents_df.duplicated(subset=["name"], keep="first")]
+
+    # Print who was removed
+    if not duplicates.empty:
+        print("🚨 Removed duplicates:")
+        for name in duplicates["name"].unique():
+            print(f"  - {name}")
+
+    # Drop duplicates, keeping the first occurrence
+    residents_df = residents_df.drop_duplicates(subset=["name"], keep="first").reset_index(drop=True)
+
+    if optional_rules is None or not optional_rules:
+        optional_rules = {  
+                            "NS_next_weekend_blockout": True,
+                            "NS_all_future_thursdays_blockout": True,
+                            "WR_assigned_to_EW": True,
+                            "WR_assigned_to_EW": True
+                         }
+
+    ( residents,
+        resident_level,
+        roles,
+        days,
+        weekend_days,
+        nf_residents,
+        non_nf_residents,
+        wr_residents,
+        combined_blackout_df,
+        combined_blackout_dict,
         night_counts,
-        resident_max_limit, 
+        vacation_df,
+        weekend_rounds_df,
+        ns_residents,
+        nf_calendar_df ) = preprocess_data.prepare_data(residents_df,
+                                    start_date,
+                                    num_weeks,
+                                    resident_year,
+                                    buffers,
+                                    nf_max_limit,
+                                    optional_rules,
+                                    limited_shift_residents,
+                                    off_days,
+                                    on_days,
+                                    r2_cover,
+                                    preassigned_ns_df)
+    
+
+    # Per-resident caps
+    max_shifts, max_points, weekend_limits = helper.calculate_max_limits(
+        residents,
+        nf_residents,
+        wr_residents,
+        night_counts,
+        resident_max_limit,
         nf_max_limit
     )
     
     # Shuffle & sort residents by night count (adds randomness for fairness)
     residents = sorted(
-        residents, 
+        residents,
         key=lambda r: (night_counts.get(r, 0), random.random()))
     
     # -----------------------------------------------------
     # 2. Define model and decision variables
     # -----------------------------------------------------
   
+    print("Starting model..........")
     model = cp_model.CpModel()
     
     # Binary variable: assign[d, role, r] = 1 if resident r works role on day d
     assign = {
         (d, role, r): model.NewBoolVar(f"assign_{d.date()}_{role}_{r}")
-        for d in days 
-        for role in roles 
+        for d in days
+        for role in roles
         for r in residents
     }
     
@@ -92,130 +134,172 @@ def schedule_with_ortools_full_modular(
     # 3. Hard constraints (must always hold)
     # -----------------------------------------------------
     
-    constraints.add_basic_constraints(model, assign, days, roles, residents)
+    general.add_basic_constraints(model, assign, days, roles, residents)
     
     # Weekend rounds coverage and blackout rules
-    constraints.add_weekend_rounds_constraint(model, assign, roles, weekend_rounds_df)
+    if optional_rules["WR_assigned_to_EW"] == True:
+        wr.add_weekend_rounds_constraint(model, assign, roles, weekend_rounds_df, resident_year, preassigned_wr_df, combined_blackout_dict)
     
-    for blackout in [nf_blackout, wr_blackout, ns_blackout, vacation_blackout]:
-        constraints.add_blackout_constraints(model, assign, roles, blackout)
+    print("BLACKOUT")
+    print("📅", " | ".join(str(d) for d in sorted(combined_blackout_dict.get("Raghad", []))))
+    
+    general.add_blackout_constraints(model, assign, roles, combined_blackout_dict)
     
     # Caps: total shifts, points, weekend limits
-    constraints.add_shift_cap_constraints(
-        model, 
-        assign, 
-        days, 
-        roles, 
-        residents, 
-        max_shifts, 
-        max_points, 
-        weekend_days, 
-        weekend_limits, 
+    general.add_shift_cap_constraints(
+        model,
+        assign,
+        days,
+        roles,
+        residents,
+        max_shifts,
+        max_points,
+        weekend_days,
+        weekend_limits,
         ns_residents_df=ns_residents
     )
     
     # -----------------------------------------------------
     # 3b. No consecutive groups (days + Fri/Sat weekends)
     # -----------------------------------------------------
-    
-    # Each day is its own group (no consecutive days)
+    # ==== DAILY CONSTRAINT ====
     day_groups = [[d] for d in days]
-    constraints.add_no_consecutive_groups_constraint(
-        model, 
-        assign, 
-        day_groups, 
-        roles, 
-        residents, 
-        label="day"
+    general.add_no_consecutive_groups_constraint(
+        model,
+        assign,
+        day_groups,
+        roles,
+        residents,
+        label="day",
+        min_gap_groups=max_consecutive_days,
+        prevent_same_role=True
     )
-    
-    # Build weekend groups as explicit Friday–Saturday pairs
+
+    # ==== WEEKEND CONSTRAINT ====
     weekend_groups = build_weekend_groups(days)
-    constraints.add_no_consecutive_groups_constraint(
-        model, 
-        assign, 
-        weekend_groups, 
-        roles, 
-        residents, 
-        label="weekend"
+    general.add_no_consecutive_groups_constraint(
+        model,
+        assign,
+        weekend_groups,
+        roles,
+        residents,
+        label="weekend",
+        min_gap_groups=max_consecutive_days,
+        prevent_same_role=True
     )
     
     # -----------------------------------------------------
-    # 4. Soft constraints (preferences, optional rules)
+    # 4. Optional Rules
     # -----------------------------------------------------
     
     if limited_shift_residents is not None:
-        constraints.add_limited_shifts_constraint(model, assign, days, roles, limited_shift_residents)
+        general.add_limited_shifts_constraint(model, assign, days, roles, limited_shift_residents)
     
     if off_days is not None:
-        constraints.add_off_days_constraint(model, assign, roles, off_days)
+        general.add_off_days_constraint(model, assign, roles, off_days)
     
     if on_days is not None:
-        constraints.add_on_days_constraint(model, assign, roles, on_days)
-    
-    # Add soft preferences for R3/R4 role tendencies
-    role_pref_penalties = penalty.add_role_preferences_by_level(
-        model, 
-        assign, 
-        roles, 
-        days, 
-        residents, 
-        resident_level, 
-        nf_residents, 
-        weight=3
-    )
+        general.add_on_days_constraint(model, assign, roles, on_days)
 
-    # Add soft preference for NF day shifts (prefer Tue/Thu)
-    nf_day_pref_penalties = penalty.add_nf_day_preferences(
+    # -----------------------------------------------------
+    # 5. Preferences
+    # -----------------------------------------------------
+    role_pref_penalties = []
+    nf_day_pref_penalties = []
+    
+    if resident_year == "seniors":
+        # Add soft preferences for R3/R4 role tendencies
+        role_pref_penalties = general.add_role_preferences_by_level(
+            model,
+            assign,
+            roles,
+            days,
+            residents,
+            resident_level,
+            nf_residents,
+            weight=3
+        )
+
+        # Add soft preference for NF day shifts (prefer Tue/Thu)
+        nf_day_pref_penalties = nf.add_nf_day_preferences_seniors(
+            model,
+            assign,
+            roles,
+            days,
+            nf_residents,
+            weight=3
+        )
+
+    elif resident_year == "r1":
+        # Add preference for NF day shifts (avoid Tue/Thu)
+        role_pref_penalties = nf.add_nf_day_preferences_juniors(
+            model,
+            assign,
+            roles,
+            days,
+            nf_residents,
+            weight=3
+        )
+    
+    # -----------------------------------------------------
+    # 6. Fairness scoring + objective
+    # -----------------------------------------------------
+    
+    balance_penalties, score_vars = general.add_score_balance_constraint(
         model,
         assign,
-        roles,
         days,
+        roles,
+        residents,
+        weekend_days,
         nf_residents,
-        weight=3
-    )
-    
-    # -----------------------------------------------------
-    # 5. Fairness scoring + objective
-    # -----------------------------------------------------
-    
-    balance_penalties, score_vars = penalty.add_score_balance_constraint(
-        model, 
-        assign, 
-        days, 
-        roles, 
-        residents, 
-        weekend_days, 
-        nf_residents, 
-        weekend_rounds_df, 
-        ns_residents, 
-        night_counts, 
-        vacation_df, 
-        limited_shift_residents, 
+        weekend_rounds_df,
+        ns_residents,
+        night_counts,
+        vacation_df,
+        limited_shift_residents,
         off_days
+    )
+
+    # Maximize spacing constraint
+    spacing_soft_penalties = general.add_minimum_spacing_soft_constraint(
+        model,
+        assign,
+        days,
+        roles,
+        residents,
+        min_gap=max_consecutive_days,    
+        weight=3      
     )
     
     # Tue/Thu fairness penalty (soft)
-    hard_day_penalties = penalty.tuesday_thursday_fairness_penalty(model, assign, days, roles, residents)
-    diverse_penalties = penalty.diverse_rotation_penalty(model, assign, days, roles, residents)
+    hard_day_penalties = general.tuesday_thursday_fairness_penalty(model, assign, days, roles, residents)
+    diverse_penalties = general.diverse_rotation_penalty(model, assign, days, roles, residents)
+
+    wr_penalties = wr.add_wr_soft_constraints(model, assign, days, roles, weekend_rounds_df, penalty_weight=10)
     
     # Build objective
     objective.build_objective(
-        model, 
-        score_vars=score_vars, 
-        balance_penalties=balance_penalties, 
-        hard_day_penalties=hard_day_penalties, 
-        diverse_penalties=diverse_penalties, 
+        model,
+        score_vars=score_vars,
+        balance_penalties=balance_penalties,
+        hard_day_penalties=hard_day_penalties,
+        diverse_penalties=diverse_penalties,
         role_pref_penalties=role_pref_penalties,
-        nf_day_pref_penalties=nf_day_pref_penalties, 
+        nf_day_pref_penalties=nf_day_pref_penalties,
+        wr_penalties=wr_penalties,
+        spacing_penalties=spacing_soft_penalties,
         balance_weight=10, 
         hard_day_weight=5, 
-        diverse_weight=10, 
-        role_pref_weight=13
+        diverse_weight=5, 
+        role_pref_weight=10,
+        nf_day_pref_weight=10,
+        wr_pref_weight=10,
+        spacing_weight=5
     )
     
     # -----------------------------------------------------
-    # 6. Solve the model
+    # 7. Solve the model
     # -----------------------------------------------------
     
     solver = cp_model.CpSolver()
@@ -230,22 +314,22 @@ def schedule_with_ortools_full_modular(
         raise RuntimeError("No feasible solution found")
     
     # -----------------------------------------------------
-    # 7. Extract results
+    # 8. Extract results
     # -----------------------------------------------------
     
     return objective.extract_schedule(
-        solver, 
-        assign, 
-        days, 
-        roles, 
-        residents, 
-        wr_residents, 
-        ns_residents, 
-        night_counts, 
-        score_vars, 
-        max_shifts, 
-        max_points, 
+        solver,
+        assign,
+        days,
+        roles,
+        residents,
+        wr_residents,
+        weekend_rounds_df,
+        ns_residents,
+        night_counts,
+        score_vars,
+        max_shifts,
+        max_points,
         nf_calendar_df,
         resident_year
     )
-

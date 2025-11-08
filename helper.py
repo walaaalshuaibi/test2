@@ -1,7 +1,36 @@
-import pandas as pd
 from datetime import datetime, timedelta
 import re
+import pandas as pd
 import random
+
+def resident_score_expr(assign, days, roles, resident, weekend_days, weekend_rounds_df=None, ns_residents_df=None):
+    """ 
+    Build the linear expression for a resident's score:
+    - 1 point per weekday shift
+    - 2 points per weekend shift
+    - +2 bonus per weekend rounds 
+    """
+    
+    # Base score: weighted by weekday/weekend
+    expr = sum(
+        assign[(d, role, resident)] * (2 if d in weekend_days else 1) 
+        for d in days for role in roles
+    )
+    
+    # Weekend round bonus: +2 per WR date
+    if weekend_rounds_df is not None and not weekend_rounds_df.empty:
+        wr_dates = weekend_rounds_df.loc[
+            weekend_rounds_df["name"].str.strip() == resident, "date"
+        ]
+        expr += 2 * len(wr_dates)
+    
+    # NS bonus
+    if ns_residents_df is not None and not ns_residents_df.empty:
+        ns_residents = set(ns_residents_df["name"].str.strip())
+        if resident in ns_residents:
+            expr += 2
+            
+    return expr
 
 # ==========================================================
 # ================== PREPROCESS DATA =======================
@@ -10,214 +39,120 @@ import random
 def rotate_list(lst, offset):
     return lst[offset % len(lst):] + lst[:offset % len(lst)] if lst else []
 
-def extract_shift_columns():
-    # Extract the columns needed
-    nf_roles = ["ER-1 Night", "ER-2 Night", "EW Night"]
-    day_roles = ["ER-1 Day", "ER-2 Day", "EW Day"]
-    return nf_roles, day_roles
-
 # Helper: expand date ranges from NF column
 def expand_dates(date_range_str, base_year):
-    if not date_range_str or date_range_str.strip().lower() == "no":
+    """
+    Expand strings like:
+      - "01 Dec"
+      - "28-29 Nov"
+      - "30 Nov - 01 Dec"
+      - "28-29 Nov and 12-13 Dec"
+      - "01- 02 Dec"
+    into a list of normalized pd.Timestamp dates, inferring months across ranges.
+
+    Rules:
+    - Split only on 'and' (case-insensitive). Commas are not treated as separators here.
+    - If the start lacks a month (e.g., '28-29 Nov'), borrow the month from the end part ('Nov').
+    - If the end lacks a month (rare), borrow from the start part.
+    - Handle year rollover when end < start (e.g., '30 Dec - 02 Jan').
+    """
+    if not date_range_str or str(date_range_str).strip().lower() == "no":
         return []
-    
-    # Normalize dashes and spacing
-    clean_str = date_range_str.replace("–", "-").replace("—", "-").strip()
-    clean_str = re.sub(r"\s*-\s*", "-", clean_str)
-    
-    # If single date
-    if "-" not in clean_str:
-        return [pd.Timestamp(datetime.strptime(clean_str + f" {base_year}", "%d %b %Y")).normalize()]
-    
-    # Split into start and end
-    start_str, end_str = clean_str.split("-", 1)
-    start_str = start_str.strip()
-    end_str = end_str.strip()
-    
-    # Parse start
-    try:
-        start_date = datetime.strptime(start_str + f" {base_year}", "%d %b %Y")
-    except ValueError:
-        end_parts = end_str.split()
-        if len(end_parts) == 2:
-            start_date = datetime.strptime(start_str + " " + end_parts[1] + f" {base_year}", "%d %b %Y")
-        else:
-            raise
-    
-    # Infer end year
-    try:
-        end_date = datetime.strptime(end_str + f" {base_year}", "%d %b %Y")
-        if end_date < start_date:
-            end_date = datetime.strptime(end_str + f" {base_year + 1}", "%d %b %Y")
-    except ValueError:
-        start_parts = start_str.split()
-        if len(start_parts) == 2:
-            try:
-                end_date = datetime.strptime(end_str + " " + start_parts[1] + f" {base_year}", "%d %b %Y")
-                if end_date < start_date:
-                    end_date = datetime.strptime(end_str + " " + start_parts[1] + f" {base_year + 1}", "%d %b %Y")
-            except ValueError:
+
+    s = str(date_range_str)
+
+    # Normalize dash variants and spacing around dashes
+    s = s.replace("–", "-").replace("—", "-")
+    s = re.sub(r"\s*-\s*", "-", s).strip()
+
+    # Split only on 'and' to support multiple ranges
+    parts = re.split(r"\band\b", s, flags=re.IGNORECASE)
+    parts = [p.strip() for p in parts if p.strip()]
+
+    dates_out = []
+
+    for part in parts:
+        # Case 1: single date (no dash)
+        if "-" not in part:
+            dt = datetime.strptime(f"{part} {base_year}", "%d %b %Y")
+            dates_out.append(pd.Timestamp(dt).normalize())
+            continue
+
+        # Case 2: range with dash
+        start_str, end_str = part.split("-", 1)
+        start_str = start_str.strip()
+        end_str = end_str.strip()
+
+        # Helper: does token contain both day and month?
+        def has_month(token):
+            return len(token.split()) >= 2
+
+        # Parse start, possibly borrowing month from end
+        try:
+            if has_month(start_str):
+                start_date = datetime.strptime(f"{start_str} {base_year}", "%d %b %Y")
+            else:
+                # Borrow month from end if present (e.g., '28-29 Nov')
+                end_parts = end_str.split()
+                if len(end_parts) >= 2:
+                    start_date = datetime.strptime(f"{start_str} {end_parts[-1]} {base_year}", "%d %b %Y")
+                else:
+                    # Last resort: assume same month as end’s numeric day (unlikely)
+                    start_date = datetime.strptime(f"{start_str} {base_year}", "%d %b %Y")
+        except ValueError:
+            # Try adding month from end more explicitly
+            end_parts = end_str.split()
+            if len(end_parts) >= 2:
+                start_date = datetime.strptime(f"{start_str} {end_parts[-1]} {base_year}", "%d %b %Y")
+            else:
                 raise
-        else:
-            raise
-    
-    # Expand full range
-    return [pd.Timestamp(start_date + timedelta(days=i)).normalize() for i in range((end_date - start_date).days + 1)]
 
-def build_nf_calendar(residents_df, start_date, nf_cols=None):
-    """ 
-    Build an NF calendar from residents_df and expand into NF1..NF{n_slots} columns.
+        # Parse end, possibly borrowing month from start
+        try:
+            if has_month(end_str):
+                end_date = datetime.strptime(f"{end_str} {base_year}", "%d %b %Y")
+            else:
+                start_parts = start_str.split()
+                if len(start_parts) >= 2:
+                    end_date = datetime.strptime(f"{end_str} {start_parts[-1]} {base_year}", "%d %b %Y")
+                else:
+                    end_date = datetime.strptime(f"{end_str} {base_year}", "%d %b %Y")
+            # Year rollover if end < start (e.g., '30 Dec - 01 Jan')
+            if end_date < start_date:
+                # If end had explicit month Jan, this’s expected; add a year
+                end_date = datetime.strptime(end_date.strftime("%d %b") + f" {base_year + 1}", "%d %b %Y")
+        except ValueError:
+            # Borrow month from start explicitly
+            start_parts = start_str.split()
+            if len(start_parts) >= 2:
+                end_date = datetime.strptime(f"{end_str} {start_parts[-1]} {base_year}", "%d %b %Y")
+                if end_date < start_date:
+                    end_date = datetime.strptime(end_date.strftime("%d %b") + f" {base_year + 1}", "%d %b %Y")
+            else:
+                raise
+
+        # Expand inclusive range
+        span_days = (end_date - start_date).days
+        for i in range(span_days + 1):
+            dates_out.append(pd.Timestamp(start_date + timedelta(days=i)).normalize())
+
+    return dates_out
+
+def calculate_max_limits(residents, nf_residents, wr_residents, night_counts, resident_max_limit, nf_max_limit ):
     """
-    
-    if nf_cols is None:
-        nf_cols = ["nf1", "nf2", "nf3"]
-    
-    # --- Step 1: Collect NF assignments per date ---
-    calendar = {}
-    for _, row in residents_df.iterrows():
-        for d in expand_dates(row["nf"], base_year=start_date.year):
-            # Ensure d is a pd.Timestamp
-            d_ts = pd.Timestamp(d)
-            calendar.setdefault(d_ts, []).append(row["name"])
-    
-    # --- Step 2: Determine full date range ---
-    start_date = pd.Timestamp(start_date)
-    last_date = max(calendar.keys()) if calendar else start_date
-    last_date = pd.Timestamp(last_date)
-    all_dates = [start_date + pd.Timedelta(days=i) for i in range((last_date - start_date).days + 1)]
-    
-    # --- Step 3: Build base NF calendar DataFrame ---
-    base_calendar = pd.DataFrame({
-        "day": [d.strftime("%a") for d in all_dates],
-        "date": all_dates,  # keep as Timestamp
-        "nf": [", ".join(calendar.get(d, [])) for d in all_dates]
-    })
-    
-    # --- Step 4: Expand into NF1..NF{n_slots} with rotation ---
-    calendar_data = []
-    for day_idx, row in base_calendar.iterrows():
-        names = row["nf"].split(", ") if row["nf"] else []
-        rotated_names = rotate_list(names, day_idx)
-        row_dict = {
-            "day": row["day"],
-            "date": row["date"]
-        }
-        for idx, col_name in enumerate(nf_cols):
-            row_dict[col_name] = rotated_names[idx] if idx < len(rotated_names) else ""
-        calendar_data.append(row_dict)
-    
-    return pd.DataFrame(calendar_data)
-
-def build_blackout_lookup(blackout_df):
-    blackout_dict = {}
-    for _, row in blackout_df.iterrows():
-        resident = row["resident"]
-        date = pd.to_datetime(row["date"])
-        blackout_dict.setdefault(resident, set()).add(date)
-    return blackout_dict
-
-def assign_ns_slot(date, available_residents, blackout_lookup, resident_level, role):
-    """ 
-    Assign one resident to NS slot on a given date, with weighted preference:
-    - R4s more likely for ER1/ER2
-    - R3s more likely for EW 
+    Calculate maximum shifts, points, and weekend limits for each resident.
     """
-    
-    # Filter out blacked-out residents
-    candidates = [r for r in available_residents if (r, date) not in blackout_lookup]
-    if not candidates:
-        return None
-    
-    # Build weights
-    weights = []
-    for r in candidates:
-        level = resident_level.get(r, "").lower()
-        # ER1/ER2 → bias toward R4
-        if role in ["er-1 night", "er-2 night"] and level == "r4":
-            weights.append(3)
-        elif role in ["er-1 night", "er-2 night"] and level == "r3":
-            weights.append(1)
-        # EW → bias toward R3
-        elif role == "ew night" and level == "r3":
-            weights.append(3)
-        elif role == "ew night" and level == "r4":
-            weights.append(1)
-        # fallback equal weight
-        else:
-            weights.append(1)
-    
-    # Weighted random choice
-    chosen = random.choices(candidates, weights=weights, k=1)[0]
+    max_shifts, max_points, weekend_limits = {}, {}, {}
 
-    # Remove the chosen resident from available_residents
-    if chosen in available_residents:
-        available_residents.remove(chosen)
+    for resident in residents:    
+        if resident in nf_residents:        # night floaters
+            shifts, points, weekend = (nf_max_limit)
+        else: 
+            shifts, points, weekend = (resident_max_limit)
+            
+        # Define Max Shifts, Max Points, Max Weekends
+        max_shifts[resident] = shifts
+        max_points[resident] = points
+        weekend_limits[resident] = weekend
 
-    return chosen
-
-def fill_ns_cells(non_nf_residents, nf_calendar_df, wr_residents, resident_level, blackout_df=None, nf_cols=None):
-    """ 
-    Fill empty NF cells in the calendar with unused residents, ensuring they are not on vacation or blackout on that date.
-    """
-    
-    if nf_cols is None:
-        nf_cols = ["NF1", "NF2", "NF3"]
-    
-    # --- Step 1: Build resident pool ---
-    available_residents = [r for r in non_nf_residents if r not in wr_residents]
-    random.shuffle(available_residents)
-    
-    # --- Step 2: Build lookup sets for blackout ---
-    blackout_lookup = build_blackout_lookup(blackout_df) if blackout_df is not None else {}
-    
-    # --- Step 3: Fill missing NF slots ---
-    ns_records = []
-    for col in nf_cols:
-        for idx, val in nf_calendar_df[col].items():
-            if val == "" and available_residents:
-                date = pd.to_datetime(nf_calendar_df.at[idx, "date"])
-                assigned = assign_ns_slot(date, available_residents, blackout_lookup, resident_level, col)
-                if assigned:
-                    resident = assigned
-                    nf_calendar_df.at[idx, col] = resident
-                    ns_records.append({"date": date, "resident": resident, "role": col})
-    
-    # --- Step 4: Build NS residents DataFrame ---
-    ns_residents = pd.DataFrame(ns_records)
-    return nf_calendar_df, ns_residents, blackout_lookup
-
-def update_blackout(resident, dates, blackout_dict, buffer_days=0, exclude_dates=None, record_list=None):
-    """ 
-    Adds blackout dates for a resident with optional buffer and exclusions. 
-    Args:
-        resident (str): Resident name.
-        dates (list): List of central dates.
-        blackout_dict (dict): Dict to update.
-        buffer_days (int): Days before/after each date to include.
-        exclude_dates (set): Dates to exclude from blackout.
-        record_list (list): Optional list to append blackout records.
-    """
-    
-    for d in dates:
-        if buffer_days > 0:
-            blackout_range = pd.date_range(d - pd.Timedelta(days=buffer_days), d + pd.Timedelta(days=buffer_days))
-        else:
-            blackout_range = pd.DatetimeIndex([d])
-        
-        if exclude_dates:
-            blackout_range = blackout_range.difference(pd.DatetimeIndex(exclude_dates))
-        
-        blackout_dict.setdefault(resident, set()).update(blackout_range)
-        
-        if record_list is not None:
-            record_list.append({"resident": resident, "date": d})
-
-def build_combined_blackout_df(*blackout_dicts):
-    combined = {}
-    for bd in blackout_dicts:
-        for r, dates in bd.items():
-            combined.setdefault(r, set()).update(dates)
-    
-    return pd.DataFrame(
-        [{"resident": r, "date": d} for r, dates in combined.items() for d in dates]
-    )
+    return max_shifts, max_points, weekend_limits
