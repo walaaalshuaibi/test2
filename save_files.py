@@ -6,7 +6,7 @@ from openpyxl.utils import get_column_letter
 # -------------------------
 # Save Schedule DataFrame
 # -------------------------
-def save_schedule_as_excel(df, resident_year, output_path="Schedule.xlsx"):
+def save_schedule_as_excel(df, output_path="Schedule.xlsx"):
 
     df = df.fillna("")
     # Convert 'Date' column to readable format
