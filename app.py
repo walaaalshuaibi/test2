@@ -454,7 +454,10 @@ with tab2:
                         st.success("✅ Scheduling completed successfully!")
 
                     except Exception as e:
-                        st.error(f"❌ Scheduling error: {e}")
+                        if "'level'" in str(e):
+                            st.error("❌ Scheduling error: 'level' (make sure to change from senior to r1)")
+                        else:
+                            st.error(f"❌ Scheduling error: {e}")
                         st.text(traceback.format_exc())
 
 # =========================================================
