@@ -40,15 +40,22 @@ def save_schedule_as_excel(df, output_path="Schedule.xlsx"):
     # Split WR column into two if multiple names
     # -------------------------
     if "wr" in df.columns:
-        wr_split = df["wr"].fillna("").str.split(",", n=1, expand=True)
-        wr_split.columns = ["wr-1", "wr-2"]
+        # Detect if any row contains a comma (meaning multiple names)
+        has_multiple = df["wr"].astype(str).str.contains(",").any()
 
-        # Clean up spaces
-        wr_split["wr-1"] = wr_split["wr-1"].str.strip()
-        wr_split["wr-2"] = wr_split["wr-2"].str.strip()
+        if has_multiple:
+            wr_split = df["wr"].fillna("").str.split(",", n=1, expand=True)
+            wr_split.columns = ["wr-1", "wr-2"]
 
-        # Merge into main df (wr-1, wr-2)
-        df = pd.concat([df.drop(columns=["wr"]), wr_split], axis=1)
+            # Clean up spaces
+            wr_split["wr-1"] = wr_split["wr-1"].str.strip()
+            wr_split["wr-2"] = wr_split["wr-2"].str.strip()
+
+            # Replace original WR column with the split ones
+            df = pd.concat([df.drop(columns=["wr"]), wr_split], axis=1)
+        else:
+            # Rename to wr-1 for consistent naming if only single WR per day
+            df = df.rename(columns={"wr": "wr-1"})
 
 
     df.to_excel(output_path, index=False, sheet_name='Schedule')
