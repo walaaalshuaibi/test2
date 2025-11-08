@@ -444,6 +444,7 @@ with tab2:
                             st.error("❌ Scheduling error: 'level' (make sure to change from senior to r1)")
                         else:
                             st.error(f"❌ Scheduling error: {e}")
+                        st.text(traceback.format_exc())
 
 # =========================================================
 # 📊 TAB 3: Results
@@ -457,7 +458,7 @@ with tab3:
 
         # Save to in‑memory Excel
         schedule_buffer = io.BytesIO()
-        save_schedule_as_excel(st.session_state["schedule_df"],resident_year=resident_year ,output_path=schedule_buffer)
+        save_schedule_as_excel(st.session_state["schedule_df"] ,output_path=schedule_buffer)
         st.download_button(
             label="⬇️ Download Schedule (Excel)",
             data=schedule_buffer.getvalue(),
