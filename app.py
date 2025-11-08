@@ -144,54 +144,40 @@ with tab2:
         # ---------------------------
         # Defaults
         # ---------------------------
-        DEFAULTS = {
-            "res_shift_max": 5,
-            "res_points_max": 6,
-            "nf_shift_max": 2,
-            "nf_points_max": 2,
-            "nf_buffer": 5,
-            "ns_buffer": 2,
-            "wr_buffer": 2,
-            "vacation_buffer": 2
+        # ---------------------------
+        # Defaults - dynamic by resident year
+        # ---------------------------
+        DEFAULTS_BY_YEAR = {
+            "seniors": {
+                "res_shift_max": 5,
+                "res_points_max": 6,
+                "nf_shift_max": 2,
+                "nf_points_max": 2,
+                "nf_buffer": 5,
+                "ns_buffer": 2,
+                "wr_buffer": 2,
+                "vacation_buffer": 2
+            },
+            "r1": {
+                "res_shift_max": 10,
+                "res_points_max": 12,
+                "nf_shift_max": 2,
+                "nf_points_max": 2,
+                "nf_buffer": 5,
+                "ns_buffer": 2,
+                "wr_buffer": 2,
+                "vacation_buffer": 2
+            }
         }
 
-        if ("resident_year_last" not in st.session_state 
-            or st.session_state["resident_year_last"] != resident_year):
+        # Determine which defaults to use based on resident year
+        DEFAULTS = DEFAULTS_BY_YEAR[resident_year]
 
-            if resident_year == "seniors":
-                DEFAULTS = {
-                    "res_shift_max": 5,
-                    "res_points_max": 6,
-                    "nf_shift_max": 2,
-                    "nf_points_max": 2,
-                    "nf_buffer": 5,
-                    "ns_buffer": 2,
-                    "wr_buffer": 2,
-                    "vacation_buffer": 2
-                }
-            elif resident_year == "r1":
-                DEFAULTS = {
-                    "res_shift_max": 10,
-                    "res_points_max": 12,
-                    "nf_shift_max": 2,
-                    "nf_points_max": 2,
-                    "nf_buffer": 5,
-                    "ns_buffer": 2,
-                    "wr_buffer": 2,
-                    "vacation_buffer": 2
-                }
-
-            # Reset session_state inputs
-            st.session_state["res_shift_max_input"] = DEFAULTS["res_shift_max"]
-            st.session_state["res_points_max_input"] = DEFAULTS["res_points_max"]
-            st.session_state["nf_shift_max_input"] = DEFAULTS["nf_shift_max"]
-            st.session_state["nf_points_max_input"] = DEFAULTS["nf_points_max"]
-            st.session_state["nf_buffer_input"] = DEFAULTS["nf_buffer"]
-            st.session_state["ns_buffer_input"] = DEFAULTS["ns_buffer"]
-            st.session_state["wr_buffer_input"] = DEFAULTS["wr_buffer"]
-            st.session_state["vac_buffer_input"] = DEFAULTS["vacation_buffer"]
-
-            # Remember current resident year
+        # If resident year has changed, update all related session states
+        if st.session_state.get("resident_year_last") != resident_year:
+            for key, val in DEFAULTS.items():
+                input_key = key + "_input"
+                st.session_state[input_key] = val
             st.session_state["resident_year_last"] = resident_year
 
         # ---------------------------
@@ -259,6 +245,7 @@ with tab2:
             )
         with col3:
             st.button("🔄 Restore Defaults", on_click=restore_nf_defaults, key="restore_nf_limits")
+        nf_max_limit = (int(nf_shift_max), int(nf_points_max))
 
         # ---------------------------
         # Buffers (2x2 layout)
@@ -457,7 +444,6 @@ with tab2:
                             st.error("❌ Scheduling error: 'level' (make sure to change from senior to r1)")
                         else:
                             st.error(f"❌ Scheduling error: {e}")
-                        st.text(traceback.format_exc())
 
 # =========================================================
 # 📊 TAB 3: Results
