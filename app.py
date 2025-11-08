@@ -259,7 +259,6 @@ with tab2:
             )
         with col3:
             st.button("🔄 Restore Defaults", on_click=restore_nf_defaults, key="restore_nf_limits")
-        nf_max_limit = (int(nf_shift_max), int(nf_points_max))
 
         # ---------------------------
         # Buffers (2x2 layout)
