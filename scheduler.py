@@ -277,6 +277,8 @@ def schedule_with_ortools_full_modular(
     diverse_penalties = general.diverse_rotation_penalty(model, assign, days, roles, residents)
 
     wr_penalties = wr.add_wr_soft_constraints(model, assign, days, roles, weekend_rounds_df, penalty_weight=10)
+
+    weekend_vs_tues_thurs_penalties = general.weekend_vs_tue_thu_penalty(model, assign, days, roles, residents, weekend_days, threshold=2, weight=1)
     
     # Build objective
     objective.build_objective(
@@ -289,13 +291,15 @@ def schedule_with_ortools_full_modular(
         nf_day_pref_penalties=nf_day_pref_penalties,
         wr_penalties=wr_penalties,
         spacing_penalties=spacing_soft_penalties,
+        weekend_vs_tues_thurs_penalties=weekend_vs_tues_thurs_penalties,
         balance_weight=10, 
         hard_day_weight=5, 
         diverse_weight=5, 
         role_pref_weight=10,
         nf_day_pref_weight=10,
         wr_pref_weight=10,
-        spacing_weight=5
+        spacing_weight=5,
+        weekend_vs_tues_thurs_weight=5
     )
     
     # -----------------------------------------------------

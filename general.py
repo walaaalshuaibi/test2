@@ -119,8 +119,6 @@ def add_no_consecutive_groups_constraint(
                         assign[(d2, role, r)].Not()
                     ])
 
-
-
 # ------------------------- 
 # Soft Constraints 
 # -------------------------
@@ -167,7 +165,9 @@ def add_on_days_constraint(model, assign, roles, on_days):
 
 
 
-
+# ------------------------- 
+# Penalty
+# -------------------------
 def add_score_balance_constraint(
     model, 
     assign, 
@@ -437,6 +437,75 @@ def add_minimum_spacing_soft_constraint(model, assign, days, roles, residents, m
 
     # Return a weighted list of penalty variables
     return [weight * p for p in penalties]
+
+
+def weekend_vs_tue_thu_penalty(model, assign, days, roles, residents, weekend_days, threshold=2, weight=1):
+    """
+    Soft constraint: if a resident has >= `threshold` weekend shifts,
+    then each Tue/Thu assignment for that resident produces a penalty.
+
+    Args:
+        model: cp_model.CpModel
+        assign: dict[(day, role, resident)] -> BoolVar
+        days: iterable of pd.Timestamp (all days in schedule)
+        roles: list of role names (strings)
+        residents: list of resident names (strings)
+        weekend_days: iterable (set/list) of pd.Timestamp that are considered weekend
+        threshold: int, weekend-shift count threshold (default 2)
+        weight: multiplier for returned IntVars (use when summing objective)
+
+    Returns:
+        penalties: list of IntVar (0..weight) — include these in the objective.
+    """
+    penalty_vars = []
+    # Precompute Tue/Thu days
+    tue_thu_days = [d for d in days if d.strftime("%a") in ["Tue", "Thu"]]
+
+    for r in residents:
+        # --- weekend count var ---
+        weekend_count = model.NewIntVar(0, len(weekend_days), f"weekend_count_{r}")
+        # Sum only keys that exist in assign
+        weekend_sum_terms = []
+        for d in weekend_days:
+            for role in roles:
+                key = (d, role, r)
+                if key in assign:
+                    weekend_sum_terms.append(assign[key])
+        # If no weekend keys for this resident exist, weekend_sum_terms will be empty
+        if weekend_sum_terms:
+            model.Add(weekend_count == sum(weekend_sum_terms))
+        else:
+            model.Add(weekend_count == 0)
+
+        # Boolean: resident has many weekends (>= threshold)
+        has_many_weekends = model.NewBoolVar(f"has_many_weekends_{r}")
+        model.Add(weekend_count >= threshold).OnlyEnforceIf(has_many_weekends)
+        model.Add(weekend_count < threshold).OnlyEnforceIf(has_many_weekends.Not())
+
+        # --- For each Tue/Thu assignment, create a violation var = assign AND has_many_weekends ---
+        for d in tue_thu_days:
+            for role in roles:
+                key = (d, role, r)
+                if key not in assign:
+                    continue
+                assigned_var = assign[key]  # BoolVar
+
+                # violation bool = assigned_var AND has_many_weekends
+                violation = model.NewBoolVar(f"violation_{r}_{d.date()}_{role}")
+                # Reify: violation => both true
+                model.AddBoolAnd([assigned_var, has_many_weekends]).OnlyEnforceIf(violation)
+                # If not violation then at least one is false
+                model.AddBoolOr([assigned_var.Not(), has_many_weekends.Not()]).OnlyEnforceIf(violation.Not())
+
+                # Convert to IntVar penalty (0..weight) and apply weight later in objective
+                penalty = model.NewIntVar(0, weight, f"pen_{r}_{d.date()}_{role}")
+                # penalty == violation (0/1) scaled by weight; since violation is 0/1 we can enforce equality
+                model.Add(penalty == violation)
+
+                penalty_vars.append(penalty)
+
+    return penalty_vars
+
 
 
 

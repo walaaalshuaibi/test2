@@ -15,13 +15,15 @@ def build_objective(
     nf_day_pref_penalties=None,
     wr_penalties=None,
     spacing_penalties=None,
+    weekend_vs_tues_thurs_penalties=None,
     balance_weight=10, 
     hard_day_weight=5, 
     diverse_weight=5, 
     role_pref_weight=10,
     nf_day_pref_weight=10,
     wr_pref_weight=10,
-    spacing_weight=5
+    spacing_weight=5,
+    weekend_vs_tues_thurs_weight=5
 ):
     """ 
     Build the optimization objective using resident scores. 
@@ -63,6 +65,9 @@ def build_objective(
 
     if spacing_penalties:
         terms.extend([-spacing_weight * p for p in spacing_penalties])
+    
+    if weekend_vs_tues_thurs_penalties:
+        terms.extend([-weekend_vs_tues_thurs_weight * p for p in weekend_vs_tues_thurs_penalties])
 
     # Final objective
     model.Maximize(sum(terms))
