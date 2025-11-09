@@ -290,7 +290,7 @@ def schedule_with_ortools_full_modular(
         role_pref_penalties=role_pref_penalties,
         nf_day_pref_penalties=nf_day_pref_penalties,
         wr_penalties=wr_penalties,
-        spacing_penalties=spacing_soft_penalties,
+        #spacing_penalties=spacing_soft_penalties,
         weekend_vs_tues_thurs_penalties=weekend_vs_tues_thurs_penalties,
         balance_weight=10, 
         hard_day_weight=5, 
@@ -298,7 +298,7 @@ def schedule_with_ortools_full_modular(
         role_pref_weight=10,
         nf_day_pref_weight=10,
         wr_pref_weight=10,
-        spacing_weight=5,
+        #spacing_weight=5,
         weekend_vs_tues_thurs_weight=5
     )
     
