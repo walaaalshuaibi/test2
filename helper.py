@@ -3,7 +3,7 @@ import re
 import pandas as pd
 import random
 
-def resident_score_expr(assign, days, roles, resident, weekend_days, weekend_rounds_df=None, ns_residents_df=None):
+def resident_score_expr(assign, days, day_roles, resident, weekend_days, weekend_rounds_df=None, ns_residents_df=None):
     """ 
     Build the linear expression for a resident's score:
     - 1 point per weekday shift
@@ -14,7 +14,7 @@ def resident_score_expr(assign, days, roles, resident, weekend_days, weekend_rou
     # Base score: weighted by weekday/weekend
     expr = sum(
         assign[(d, role, resident)] * (2 if d in weekend_days else 1) 
-        for d in days for role in roles
+        for d in days for role in day_roles
     )
     
     # Weekend round bonus: +2 per WR date

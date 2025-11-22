@@ -92,40 +92,99 @@ def extract_schedule(
     max_shifts, 
     max_points, 
     nf_calendar_df,
-    resident_year
+    resident_levels
 ):
     """ 
-    Extract the solved schedule and compute per-resident scores. 
+    Extract solved schedule, compute per-resident scores, spacing stats, per-role counts,
+    weekday counts (weekend Fri+Sat, Thursday, Tuesday) and Year.
 
-    Rules:
-    - R1 residents: never assigned WR/EW.
-    - Seniors: only Friday counts as WR.
-    - Other years: Friday and Saturday both count as WR.
-    - WR counts are grouped by weekend (Fri+Sat = one WR).
-    
     Returns:
-        schedule_df: DataFrame with daily assignments (day + NF roles + WR).
-        scores_df: DataFrame with per-resident totals, score, and WR info.
+        schedule_df, scores_df
     """
-    
     schedule = []
     day_shift_counts = {r: 0 for r in residents}
 
+    # Initialize role counts per resident
+    role_counts = {r: {role: 0 for role in roles} for r in residents}
+
+    # Weekday-specific counters per resident
+    weekend_counts_per_res = {r: 0 for r in residents}   # Friday or Saturday
+    thursday_counts_per_res = {r: 0 for r in residents}
+    tuesday_counts_per_res = {r: 0 for r in residents}
+
     # --- Build the daily schedule from solver ---
     for d in days:
-        row = {"date": d.date(), "day": d.strftime('%a')}
+        date_val = d.date() if hasattr(d, "date") else d
+        weekday_str = pd.to_datetime(date_val).strftime('%a')  # 'Mon','Tue',...,'Sun'
+        row = {"date": date_val, "day": weekday_str}
         for role in roles:
+            row[role] = ""
             for r in residents:
-                if solver.Value(assign[(d, role, r)]) == 1:
-                    row[role] = r
-                    day_shift_counts[r] += 1
+                try:
+                    if solver.Value(assign[(d, role, r)]) == 1:
+                        row[role] = r
+                        day_shift_counts[r] += 1
+                        role_counts[r][role] += 1
+                        if weekday_str in ("Fri", "Sat"):
+                            weekend_counts_per_res[r] += 1
+                        if weekday_str == "Thu":
+                            thursday_counts_per_res[r] += 1
+                        if weekday_str == "Tue":
+                            tuesday_counts_per_res[r] += 1
+                except Exception:
+                    pass
         schedule.append(row)
 
-    # Add NS shifts
-    if ns_residents is not None and not ns_residents.empty:
-        for _, row in ns_residents.iterrows():
-            r = row["name"]
-            day_shift_counts[r] += 1  
+    # --- Normalize ns_residents into set of names / iterable rows and add to counts ---
+    ns_names = set()
+    ns_rows_iter = []
+    if ns_residents is None:
+        ns_names = set()
+        ns_rows_iter = []
+    elif isinstance(ns_residents, pd.DataFrame):
+        if "name" in ns_residents.columns and not ns_residents.empty:
+            ns_names = set(ns_residents["name"].tolist())
+            ns_rows_iter = ns_residents.itertuples(index=False)
+    elif isinstance(ns_residents, dict):
+        ns_names = set(ns_residents.keys())
+        ns_rows_iter = [(None, {"name": n}) for n in ns_names]
+    else:
+        try:
+            # list of names
+            if all(isinstance(x, str) for x in ns_residents):
+                ns_names = set(ns_residents)
+                ns_rows_iter = [(None, {"name": n}) for n in ns_names]
+            else:
+                names = []
+                rows = []
+                for item in ns_residents:
+                    if isinstance(item, dict) and "name" in item:
+                        names.append(item["name"])
+                        rows.append(item)
+                ns_names = set(names)
+                ns_rows_iter = rows
+        except Exception:
+            ns_names = set()
+            ns_rows_iter = []
+
+    # Add NS shifts (increment total shift counts)
+    if ns_rows_iter:
+        for entry in ns_rows_iter:
+            if isinstance(entry, tuple) and len(entry) == 2 and isinstance(entry[1], dict):
+                r = entry[1].get("name")
+            elif hasattr(entry, "name"):
+                r = getattr(entry, "name", None)
+            elif isinstance(entry, dict):
+                r = entry.get("name")
+            else:
+                r = entry if isinstance(entry, str) else None
+
+            if r and r in day_shift_counts:
+                day_shift_counts[r] += 1
+    else:
+        for r in ns_names:
+            if r in day_shift_counts:
+                day_shift_counts[r] += 1
 
     schedule_df = pd.DataFrame(schedule)
 
@@ -141,36 +200,80 @@ def extract_schedule(
     # --- WR assignment logic using weekend_rounds_df ---
     wr_counts = {r: 0 for r in residents}
     wr_column_map = defaultdict(list)
-
     if weekend_rounds_df is not None and not weekend_rounds_df.empty:
-        # Normalize dates
         weekend_rounds_df = weekend_rounds_df.copy()
         weekend_rounds_df["date"] = pd.to_datetime(weekend_rounds_df["date"]).dt.date
-
-        # Count unique WR dates per resident
-        wr_counts.update(
-            weekend_rounds_df.groupby("name")["date"].nunique().to_dict()
-        )
-
-        # Build mapping: date -> list of residents
+        wr_counts.update(weekend_rounds_df.groupby("name")["date"].nunique().to_dict())
         for d, group in weekend_rounds_df.groupby("date"):
             wr_column_map[d] = group["name"].tolist()
+    schedule_df["wr"] = schedule_df["date"].apply(lambda d: ", ".join(wr_column_map[d]) if d in wr_column_map else "")
 
-    # Add WR column to schedule_df (comma-separated names if multiple)
-    schedule_df["wr"] = schedule_df["date"].apply(
-        lambda d: ", ".join(wr_column_map[d]) if d in wr_column_map else ""
-    )
+    # --- Compute spacing stats per resident (gaps in days between consecutive assigned days) ---
+    per_resident_spacing = {}
+    all_gaps = []
+    for r in residents:
+        assigned_dates = []
+        for d in days:
+            date_val = d.date() if hasattr(d, "date") else d
+            assigned = False
+            for role in roles:
+                try:
+                    if solver.Value(assign[(d, role, r)]) == 1:
+                        assigned = True
+                        break
+                except Exception:
+                    pass
+            if assigned:
+                assigned_dates.append(pd.to_datetime(date_val).date())
 
-    # --- Build per-resident summary ---
-    scores_df = pd.DataFrame([{
-        "Name": r,
-        "Total Shifts": day_shift_counts[r],
-        "Score": solver.Value(score_vars[r]),
-        "Max Shifts": max_shifts[r],
-        "Max Points": max_points[r],
-        "WR Count": wr_counts.get(r, 0),
-        "NF Resident": "Yes" if night_counts[r] > 2 else "No",
-        "NS Resident": "Yes" if r in set(ns_residents["name"]) else "No"
-    } for r in residents])
-    
+        assigned_dates = sorted(set(assigned_dates))
+        gaps = [(assigned_dates[i] - assigned_dates[i-1]).days for i in range(1, len(assigned_dates))]
+        num_gaps = len(gaps)
+        per_resident_spacing[r] = {
+            "gaps": gaps,
+            "num_gaps": num_gaps,
+            "avg_gap": (sum(gaps) / num_gaps) if num_gaps > 0 else None,
+            "min_gap": (min(gaps) if gaps else None),
+            "max_gap": (max(gaps) if gaps else None)
+        }
+        all_gaps.extend(gaps)
+
+    spacing_overall = {
+        "num_gaps": len(all_gaps),
+        "avg_gap": (sum(all_gaps) / len(all_gaps)) if all_gaps else None,
+        "min_gap": (min(all_gaps) if all_gaps else None),
+        "max_gap": (max(all_gaps) if all_gaps else None)
+    }
+
+    #resident_level_map = dict(zip(residents["name"], residents["level"]))
+
+    # --- Build per-resident summary, include spacing stats, per-role counts, weekday counts and Year ---
+    scores_rows = []
+    for r in residents:
+        spacing = per_resident_spacing.get(r, {})
+        row = {
+            "Name": r,
+            "Total Shifts": day_shift_counts.get(r, 0),
+            "Score": solver.Value(score_vars[r]) if r in score_vars else None,
+            "Max Shifts": max_shifts.get(r, None) if isinstance(max_shifts, dict) else max_shifts,
+            "Max Points": max_points.get(r, None) if isinstance(max_points, dict) else max_points,
+            "WR Count": wr_counts.get(r, 0),
+            "NF Resident": "Yes" if night_counts.get(r, 0) > 2 else "No",
+            "NS Resident": "Yes" if r in ns_names else "No",
+            "spacing_avg": spacing.get("avg_gap"),
+            "spacing_min": spacing.get("min_gap"),
+            "spacing_max": spacing.get("max_gap"),
+            "spacing_gaps_count": spacing.get("num_gaps", 0),
+            "weekend_shifts": weekend_counts_per_res.get(r, 0),
+            "thursday_shifts": thursday_counts_per_res.get(r, 0),
+            "tuesday_shifts": tuesday_counts_per_res.get(r, 0),
+            "Year": resident_levels.get(r)
+        }
+        for role in roles:
+            col_name = f"role_{role}_count"
+            row[col_name] = role_counts.get(r, {}).get(role, 0)
+        scores_rows.append(row)
+
+    scores_df = pd.DataFrame(scores_rows)
+
     return schedule_df, scores_df

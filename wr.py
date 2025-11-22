@@ -158,13 +158,10 @@ def build_weekend_round_assignments(residents_df, start_date, resident_year, r2_
 
     return assignments
 
-def add_wr_soft_constraints(model, assign, days, roles, weekend_rounds_df, penalty_weight=10):
+def add_wr_soft_constraints(model, assign, days, roles, weekend_rounds_df):
     """
     Soft constraint: if a resident already has 2 WR dates in weekend_rounds_df,
     discourage assigning them to any additional weekend shifts.
-    
-    Returns:
-        penalties (list of IntVar): penalty variables to include in objective.
     """
     penalties = []
 
@@ -185,7 +182,7 @@ def add_wr_soft_constraints(model, assign, days, roles, weekend_rounds_df, penal
                             penalties.append(penalty_var)
 
     # Scale penalties by weight later in the objective
-    return [p * penalty_weight for p in penalties]
+    return penalties
 
 
 

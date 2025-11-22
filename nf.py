@@ -1,7 +1,7 @@
 import pandas as pd
 import helper
 
-def build_nf_calendar(residents_df, start_date, nf_cols=None):
+def build_nf_calendar(residents_df, start_date, buffers, nf_cols=None):
     """ 
     Build an NF calendar from residents_df and expand into NF1..NF{n_slots} columns.
     """
@@ -45,7 +45,7 @@ def build_nf_calendar(residents_df, start_date, nf_cols=None):
     
     return pd.DataFrame(calendar_data)
 
-def add_nf_day_preferences_seniors(model, assign, roles, days, nf_residents, weight=3):
+def add_nf_day_preferences_seniors(model, assign, roles, days, nf_residents):
     """
     - Hard constraint: NF residents cannot be assigned to ER-1 role.
     - Soft penalty: discourage NF residents from being assigned to day shifts
@@ -70,7 +70,7 @@ def add_nf_day_preferences_seniors(model, assign, roles, days, nf_residents, wei
 
     return penalties
 
-def add_nf_day_preferences_juniors(model, assign, roles, days, nf_residents, weight=3):
+def add_nf_day_preferences_juniors(model, assign, roles, days, nf_residents):
     """
     - Hard constraints, NF residents should avoid Tuesday and Thursday
     """
