@@ -123,6 +123,7 @@ def add_cooldown_constraints(model, assign, days, roles, residents, cooldown=3):
     """
     Hard constraint: if a resident works on day d, they cannot work for the next `cooldown` days.
     """
+    cooldown=cooldown+1
     for r in residents:
         for i, d in enumerate(days):
             # BoolVar: resident works on day d
