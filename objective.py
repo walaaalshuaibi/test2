@@ -92,7 +92,8 @@ def extract_schedule(
     max_shifts, 
     max_points, 
     nf_calendar_df,
-    resident_levels
+    resident_levels,
+    limited_shift_residents
 ):
     """ 
     Extract solved schedule, compute per-resident scores, spacing stats, per-role counts,
@@ -251,11 +252,17 @@ def extract_schedule(
     scores_rows = []
     for r in residents:
         spacing = per_resident_spacing.get(r, {})
+
+        if limited_shift_residents and r in limited_shift_residents:
+            effective_max_shifts = limited_shift_residents[r]  # use the limited value
+        else:
+            effective_max_shifts = max_shifts.get(r, None) if isinstance(max_shifts, dict) else max_shifts
+
         row = {
             "Name": r,
             "Total Shifts": day_shift_counts.get(r, 0),
             "Score": solver.Value(score_vars[r]) if r in score_vars else None,
-            "Max Shifts": max_shifts.get(r, None) if isinstance(max_shifts, dict) else max_shifts,
+            "Max Shifts": effective_max_shifts,
             "Max Points": max_points.get(r, None) if isinstance(max_points, dict) else max_points,
             "WR Count": wr_counts.get(r, 0),
             "NF Resident": "Yes" if night_counts.get(r, 0) > 2 else "No",

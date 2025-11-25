@@ -256,6 +256,9 @@ def schedule_with_ortools_full_modular(
         weekend_vs_tues_thurs_weight = 1
     )
 
+    print("Resident Blackouts")
+    print(combined_blackout_df[combined_blackout_df['name']=="Donna"])
+
     # print("Weekend Rounders:")
     # print(weekend_rounds_df)
     # print("Blackouts:")
@@ -310,5 +313,6 @@ def schedule_with_ortools_full_modular(
         max_shifts,
         max_points,
         nf_calendar_df,
-        resident_levels
+        resident_levels,
+        limited_shift_residents
     )

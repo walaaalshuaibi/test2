@@ -23,7 +23,7 @@ if "residents_df" not in st.session_state:
     st.session_state["residents_df"] = pd.DataFrame()
 
 if "constraints" not in st.session_state:
-    st.session_state["constraints"] = pd.DataFrame(columns=["resident", "type", "value"])
+    st.session_state["constraints"] = pd.DataFrame(columns=["name", "type", "value"])
 
 if "schedule_df" not in st.session_state:
     st.session_state["schedule_df"] = None
@@ -40,7 +40,7 @@ def build_constraints_from_session():
     off_rows, on_rows = [], []
 
     for _, row in df.iterrows():
-        r, ctype, val = row["resident"], row["type"], row["value"]
+        r, ctype, val = row["name"], row["type"], row["value"]
 
         if ctype == "max shifts":
             limited_shift_residents[r] = int(val)
@@ -51,9 +51,9 @@ def build_constraints_from_session():
             val_date = val_date.normalize()  # zero the time component
 
             if ctype == "off day":
-                off_rows.append({"resident": r, "date": val_date})
+                off_rows.append({"name": r, "date": val_date})
             else:
-                on_rows.append({"resident": r, "date": val_date})
+                on_rows.append({"name": r, "date": val_date})
 
     off_days = pd.DataFrame(off_rows) if off_rows else None
     on_days = pd.DataFrame(on_rows) if on_rows else None
@@ -91,7 +91,7 @@ with tab1:
         if st.button("Add Constraint"):
             new_constraint = pd.DataFrame(
                 [[selected_resident, constraint_type, constraint_value]],
-                columns=["resident", "type", "value"],
+                columns=["name", "type", "value"],
             )
             st.session_state["constraints"] = pd.concat(
                 [st.session_state["constraints"], new_constraint], ignore_index=True
@@ -105,7 +105,7 @@ with tab1:
             for i, row in st.session_state["constraints"].iterrows():
                 cols = st.columns([3, 2, 3, 1])  # layout for name | type | value | delete button
                 with cols[0]:
-                    st.write(f"👤 **{row['resident']}**")
+                    st.write(f"👤 **{row['name']}**")
                 with cols[1]:
                     st.write(row["type"])
                 with cols[2]:
