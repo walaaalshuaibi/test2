@@ -31,7 +31,7 @@ def schedule_with_ortools_full_modular(
     buffers,
     r2_cover,
     optional_rules=None,
-    max_consecutive_days=3,
+    max_consecutive_days=2,
     preassigned_ns_df=None,
     preassigned_wr_df=None
 ):
@@ -46,7 +46,6 @@ def schedule_with_ortools_full_modular(
     # 1. Prepare data and blackouts
     # -----------------------------------------------------
 
-    # LOAD DATA
     # Assign variables
     (residents_df, residents, resident_max_limit, nf_max_limit, optional_rules, 
      resident_levels, start_date, days, weekend_days, nf_roles, day_roles ) = preprocess_data.prepare_data(
@@ -57,21 +56,23 @@ def schedule_with_ortools_full_modular(
         nf_max_limit,
         optional_rules,
         resident_max_limit)
+    
     # Build NF calendar
     nf_calendar_df = nf.build_nf_calendar(residents_df, start_date, buffers, nf_cols=nf_roles)
+
     # Blackout Dictionary
     (non_nf_residents, nf_residents, wr_residents, nf_blackout_lookup, combined_blackout_df, combined_blackout_dict,
      night_counts, weekend_rounds_df, vacation_df) = blackout.prepare_blackout(
         buffers, residents_df, start_date, resident_year, r2_cover, on_days, off_days, residents)
+    
     # Per-resident caps
     max_shifts, max_points, weekend_limits = helper.calculate_max_limits(
         residents,
         nf_residents,
-        wr_residents,
-        night_counts,
         resident_max_limit,
         nf_max_limit
     )
+
 
     # NS SCHEDULE
     filled_nf_calendar_df, ns_residents, updated_blackout = ns.fill_ns_cells(
@@ -87,6 +88,7 @@ def schedule_with_ortools_full_modular(
         nf_blackout_lookup=nf_blackout_lookup,
         preassigned_ns_df=preassigned_ns_df
     )
+
     blackout.ns_blackout_section(residents, ns_residents, optional_rules, nf_calendar_df, buffers, combined_blackout_dict)
     
     # Shuffle & sort residents by night count (adds randomness for fairness)
@@ -94,6 +96,7 @@ def schedule_with_ortools_full_modular(
         residents,
         key=lambda r: (night_counts.get(r, 0), random.random()))
     
+
     # -----------------------------------------------------
     # 2. Define model and decision variables
     # -----------------------------------------------------
@@ -122,6 +125,7 @@ def schedule_with_ortools_full_modular(
     general.add_blackout_constraints(model, assign, day_roles, combined_blackout_dict)
     
     # Caps: total shifts, points, weekend limits
+
     general.add_shift_cap_constraints(
         model,
         assign,
@@ -134,7 +138,6 @@ def schedule_with_ortools_full_modular(
         weekend_limits,
         ns_residents_df=ns_residents
     )
-    
     # -----------------------------------------------------
     # 3b. No consecutive groups (days + Fri/Sat weekends)
     # -----------------------------------------------------
@@ -220,7 +223,7 @@ def schedule_with_ortools_full_modular(
         off_days
     )
 
-    # Maximize spacing constraint
+    # Maximize spacing constraint                                     
     spacing_soft_penalties = general.add_minimum_spacing_soft_constraint(model, assign, days, day_roles, residents, min_gap=7)
     
     # Tue/Thu fairness penalty (soft)
@@ -252,6 +255,27 @@ def schedule_with_ortools_full_modular(
         spacing_weight = 3.2,
         weekend_vs_tues_thurs_weight = 1
     )
+
+    # print("Weekend Rounders:")
+    # print(weekend_rounds_df)
+    # print("Blackouts:")
+    # for r in wr_residents:
+    #     print(r)
+    #     print(combined_blackout_df[combined_blackout_df['name']==r])
+
+    # print("NF:")
+    # print(nf_residents)
+    # print("Blackouts:")
+    # for r in nf_residents:
+    #     print(r)
+    #     print(combined_blackout_df[combined_blackout_df['name']==r])
+
+    # print("NS:")
+    # print(ns_residents)
+    # print("Blackouts:")
+    # for r in ns_residents['name']:
+    #     print(r)
+    #     print(combined_blackout_df[combined_blackout_df['name']==r])
     
     # -----------------------------------------------------
     # 7. Solve the model

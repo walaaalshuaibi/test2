@@ -58,8 +58,8 @@ def add_shift_cap_constraints(
         weekend_shifts = sum(assign[(d, role, r)] for d in weekend_days for role in roles)
         
         # --- Minimums ---
-        model.Add(total_shifts >= 1) 
-        model.Add(total_points >= 1)  
+        model.Add(total_shifts >= 0) 
+        model.Add(total_points >= 0)  
         
         # --- Maximums ---
         model.Add(total_shifts <= max_shifts[r])

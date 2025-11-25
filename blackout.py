@@ -20,7 +20,7 @@ def prepare_blackout(buffers, residents_df, start_date, resident_year, r2_cover,
     non_nf_residents = set(residents) - nf_residents
 
     combined_blackout_dict, combined_blackout_df = blackout.build_combined_blackout_df(
-    nf_blackout, wr_blackout, vacation_blackout, wr_records=weekend_rounds_records, resident_year=resident_year)
+    nf_blackout,wr_blackout,vacation_blackout,on_blackout,off_blackout, wr_records=weekend_rounds_records, resident_year=resident_year)
 
     nf_blackout_lookup = {(r, d): True for r, dates in nf_blackout.items() for d in dates}
 

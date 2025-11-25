@@ -138,7 +138,7 @@ def expand_dates(date_range_str, base_year):
 
     return dates_out
 
-def calculate_max_limits(residents, nf_residents, wr_residents, night_counts, resident_max_limit, nf_max_limit ):
+def calculate_max_limits(residents, nf_residents,  resident_max_limit, nf_max_limit ):
     """
     Calculate maximum shifts, points, and weekend limits for each resident.
     """

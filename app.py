@@ -159,9 +159,9 @@ with tab2:
                 "vacation_buffer": 2
             },
             "r1": {
-                "res_shift_max": 10,
-                "res_points_max": 12,
-                "nf_shift_max": 2,
+                "res_shift_max": 6,
+                "res_points_max": 8,
+                "nf_shift_max": 1,
                 "nf_points_max": 2,
                 "nf_buffer": 5,
                 "ns_buffer": 2,
