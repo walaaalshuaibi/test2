@@ -260,9 +260,9 @@ def extract_schedule(
             "WR Count": wr_counts.get(r, 0),
             "NF Resident": "Yes" if night_counts.get(r, 0) > 2 else "No",
             "NS Resident": "Yes" if r in ns_names else "No"
-            ,"spacing_avg": spacing.get("avg_gap"),
-            "spacing_min": spacing.get("min_gap"),
-            "spacing_max": spacing.get("max_gap")
+            # ,"spacing_avg": spacing.get("avg_gap"),
+            # "spacing_min": spacing.get("min_gap"),
+            # "spacing_max": spacing.get("max_gap"),
             # "spacing_gaps_count": spacing.get("num_gaps", 0),
             # "weekend_shifts": weekend_counts_per_res.get(r, 0),
             # "thursday_shifts": thursday_counts_per_res.get(r, 0),
