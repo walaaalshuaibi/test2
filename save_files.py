@@ -187,31 +187,34 @@ def save_score_as_excel(df, output_path="Score.xlsx"):
             g, r = 255, int(255 * (1 - (ratio - 0.5) / 0.5))
         return f"FF{r:02X}{g:02X}00"
 
-    # Apply gradient to Score column
-    if 'score' in df.columns and 'max_points' in df.columns:
-        score_col_idx = original_columns.index('score') + 1
+    # Apply gradient to Score
+    if "Score" in original_columns and "Max Points" in original_columns:
+        score_col_idx = original_columns.index("Score") + 1
         for row_idx, row in enumerate(df.itertuples(index=False), start=2):
             score_val = row.Score
             max_val = row.Max_Points
             ratio = 0 if max_val == 0 else score_val / max_val
             hex_color = get_rgb_from_ratio(ratio)
+
             cell = ws.cell(row=row_idx, column=score_col_idx)
             cell.fill = PatternFill(start_color=hex_color, end_color=hex_color, fill_type='solid')
             cell.font = regular_font
             cell.border = thin_border
 
-    # Apply gradient to Total Shifts column
-    if 'total_Shifts' in df.columns and 'max_Shifts' in df.columns:
-        shifts_col_idx = original_columns.index('total shifts') + 1
+    # Apply gradient to Total Shifts
+    if "Total Shifts" in original_columns and "Max Shifts" in original_columns:
+        shifts_col_idx = original_columns.index("Total Shifts") + 1
         for row_idx, row in enumerate(df.itertuples(index=False), start=2):
             shifts_val = row.Total_Shifts
             max_val = row.Max_Shifts
             ratio = 0 if max_val == 0 else shifts_val / max_val
             hex_color = get_rgb_from_ratio(ratio)
+
             cell = ws.cell(row=row_idx, column=shifts_col_idx)
             cell.fill = PatternFill(start_color=hex_color, end_color=hex_color, fill_type='solid')
             cell.font = regular_font
             cell.border = thin_border
+
 
     # Adjust column widths dynamically
     for i, column_cells in enumerate(ws.columns, start=1):

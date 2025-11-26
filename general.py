@@ -123,7 +123,6 @@ def add_cooldown_constraints(model, assign, days, roles, residents, cooldown=3):
     """
     Hard constraint: if a resident works on day d, they cannot work for the next `cooldown` days.
     """
-    cooldown=cooldown+1
     for r in residents:
         for i, d in enumerate(days):
             # BoolVar: resident works on day d
@@ -145,17 +144,22 @@ def add_cooldown_constraints(model, assign, days, roles, residents, cooldown=3):
 # ------------------------- 
 # Soft Constraints 
 # -------------------------
-def add_limited_shifts_constraint(model, assign, days, roles, limit_dict):
+def add_limited_shifts_constraint(model, assign, days, roles, limit_dict, max_shifts):
     """ 
-    Add constraints to enforce custom shift limits for specific residents. 
+    Add constraints to enforce custom shift limits for specific residents,
+    and update the max_shifts for those residents to the new limited shifts.
     """
     
     if not limit_dict:
         return
     
-    for r, max_shifts in limit_dict.items():
-        # Ensure resident r is not assigned to more than max_shifts total
-        model.Add(sum(assign[(d, role, r)] for d in days for role in roles) <= max_shifts)
+    for r, limited_shift in limit_dict.items():
+        # Add constraint: resident r cannot have more than limited_shift total
+        model.Add(sum(assign[(d, role, r)] for d in days for role in roles) <= limited_shift)
+        
+        # Update the max_shifts dictionary for resident r
+        max_shifts[r] = limited_shift
+
 
 def add_off_days_constraint(model, assign, roles, off_days):
     """ 
@@ -183,8 +187,6 @@ def add_on_days_constraint(model, assign, roles, on_days):
         
         # Resident must be assigned to exactly one role on this date
         model.Add(sum(assign[(d, role, r)] for role in roles) == 1)
-
-
 
 
 
@@ -408,12 +410,18 @@ def add_role_preferences_by_level(model, assign, roles, days, residents, residen
 
     return penalties
 
-def add_minimum_spacing_soft_constraint(model, assign, days, roles, residents, min_gap=3):
+
+def add_minimum_spacing_soft_constraint(model, assign, days, roles, residents, max_shifts):
     """
     Add a SOFT constraint that rewards residents for having larger gaps between their assignments.
     - Does NOT forbid close shifts, only penalizes them softly.
     - Encourages the solver to space assignments out beyond 'min_gap' when possible.
     """    
+    print(max_shifts)
+    
+    min_gap = {r: max(1, 30 // max_shifts[r]) for r in residents}  # avoid 0 gap
+    print("MIN GAP: = = = = = = = = = ")
+    print(min_gap)
     penalties = []
 
     for r in residents:
@@ -423,7 +431,7 @@ def add_minimum_spacing_soft_constraint(model, assign, days, roles, residents, m
                 if j <= i:
                     continue
                 diff = (d2 - d1).days
-                if 0 < diff < min_gap:
+                if 0 < diff < min_gap[r]:
                     for role1 in roles:
                         for role2 in roles:
                             # If assigned too close -> create a penalty
@@ -442,6 +450,67 @@ def add_minimum_spacing_soft_constraint(model, assign, days, roles, residents, m
 
     # Return a weighted list of penalty variables
     return penalties
+
+
+def add_fairness_soft_constraint(model, assign, days, roles, residents, max_shifts):
+    """
+    Fairness soft constraint:
+    - Compare only residents who have the *same max_shifts*.
+    - Penalize differences in total assignments within each group.
+    """
+
+    penalties = []
+
+    # -----------------------------
+    # Compute total assignments per resident
+    # -----------------------------
+    total_assignments = {}
+    for r in residents:
+        total_assignments[r] = model.NewIntVar(
+            0, len(days) * len(roles), f"total_assignments_{r}"
+        )
+        model.Add(
+            total_assignments[r] ==
+            sum(assign[(d, role, r)] for d in days for role in roles)
+        )
+
+    # -----------------------------
+    # Group residents by max_shifts
+    # -----------------------------
+    groups = {}
+    for r in residents:
+        k = max_shifts[r]
+        if k not in groups:
+            groups[k] = []
+        groups[k].append(r)
+
+    # -----------------------------
+    # Add fairness penalties inside each group
+    # -----------------------------
+    for k, group in groups.items():
+        if len(group) <= 1:
+            continue  # no fairness comparisons needed
+
+        for i in range(len(group)):
+            for j in range(i + 1, len(group)):
+                r1 = group[i]
+                r2 = group[j]
+
+                diff = model.NewIntVar(
+                    0, len(days) * len(roles), f"fair_diff_{r1}_{r2}"
+                )
+
+                # |assignments[r1] - assignments[r2]| → diff
+                model.AddAbsEquality(
+                    diff, total_assignments[r1] - total_assignments[r2]
+                )
+
+                penalties.append(diff)
+
+    return penalties
+
+
+
 
 def weekend_vs_tue_thu_penalty(model, assign, days, roles, residents, weekend_days, threshold=2):
     """
@@ -503,7 +572,4 @@ def weekend_vs_tue_thu_penalty(model, assign, days, roles, residents, weekend_da
                 penalty_vars.append(penalty)
 
     return penalty_vars
-
-
-
 

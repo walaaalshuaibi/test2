@@ -162,7 +162,7 @@ def schedule_with_ortools_full_modular(
     # -----------------------------------------------------
     
     if limited_shift_residents is not None:
-        general.add_limited_shifts_constraint(model, assign, days, day_roles, limited_shift_residents)
+        general.add_limited_shifts_constraint(model, assign, days, day_roles, limited_shift_residents, max_shifts)
     
     if off_days is not None:
         general.add_off_days_constraint(model, assign, day_roles, off_days)
@@ -224,7 +224,9 @@ def schedule_with_ortools_full_modular(
     )
 
     # Maximize spacing constraint                                     
-    spacing_soft_penalties = general.add_minimum_spacing_soft_constraint(model, assign, days, day_roles, residents, min_gap=7)
+    spacing_soft_penalties = general.add_minimum_spacing_soft_constraint(model, assign, days, day_roles, residents, max_shifts)
+    #spacing_fairness_penalties = None
+    spacing_fairness_penalties = general.add_fairness_soft_constraint(model, assign, days, day_roles, residents, max_shifts)
     
     # Tue/Thu fairness penalty (soft)
     hard_day_penalties = general.tuesday_thursday_fairness_penalty(model, assign, days, day_roles, residents)
@@ -245,14 +247,16 @@ def schedule_with_ortools_full_modular(
         nf_day_pref_penalties=nf_day_pref_penalties,
         wr_penalties=wr_penalties,
         spacing_penalties=spacing_soft_penalties,
+        spacing_fairness_penalties=spacing_fairness_penalties,
         weekend_vs_tues_thurs_penalties=weekend_vs_tues_thurs_penalties,
-        balance_weight = 3,
+        balance_weight = 3.2,
         hard_day_weight = 1.1,
         diverse_weight = 1.2,
         role_pref_weight = 1.2,
         nf_day_pref_weight = 1,
         wr_pref_weight = 1,
         spacing_weight = 3.2,
+        spacing_fairness_weight = 2,
         weekend_vs_tues_thurs_weight = 1
     )
 
@@ -285,7 +289,7 @@ def schedule_with_ortools_full_modular(
     # -----------------------------------------------------
     
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 60
+    solver.parameters.max_time_in_seconds = 30
     solver.parameters.random_seed = 42
     solver.parameters.num_search_workers = 8
     solver.parameters.search_branching = cp_model.PORTFOLIO_SEARCH
