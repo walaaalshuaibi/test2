@@ -156,3 +156,140 @@ def calculate_max_limits(residents, nf_residents,  resident_max_limit, nf_max_li
         weekend_limits[resident] = weekend
 
     return max_shifts, max_points, weekend_limits
+
+def build_fixed_preassigned(nf_calendar_df,
+                            ns_residents,
+                            weekend_rounds_df,
+                            preassigned_ns_df=None,
+                            preassigned_wr_df=None):
+    """
+    Build a dictionary of ALL preassigned shifts for spacing penalties.
+    Output:
+        { resident_name : set([date1, date2, ...]) }
+    """
+
+    fixed = {}
+
+    # ---- 1. NF Calendar (NF residents have fixed days) ----
+    for _, row in nf_calendar_df.iterrows():
+        for role_col in nf_calendar_df.columns:
+            if role_col.lower() in ["date", "day", "weekday"]:
+                continue
+            r = row[role_col]
+            if pd.isna(r):
+                continue
+            fixed.setdefault(r.strip(), set()).add(row["date"])
+
+    # ---- 2. NS (night shifts that are pre-filled) ----
+    for _, row in ns_residents.iterrows():
+        r = row["name"].strip()
+        d = row["date"]
+        fixed.setdefault(r, set()).add(d)
+
+    # ---- 3. WR Weekend Rounders ----
+    for _, row in weekend_rounds_df.iterrows():
+        r = row["name"].strip()
+        d = row["date"]
+        fixed.setdefault(r, set()).add(d)
+
+    # ---- 4. Excel Preassigned NS ----
+    if preassigned_ns_df is not None:
+        for _, row in preassigned_ns_df.iterrows():
+            r = row["name"].strip()
+            d = row["date"]
+            fixed.setdefault(r, set()).add(d)
+
+    # ---- 5. Excel Preassigned WR ----
+    if preassigned_wr_df is not None:
+        for _, row in preassigned_wr_df.iterrows():
+            r = row["name"].strip()
+            d = row["date"]
+            fixed.setdefault(r, set()).add(d)
+
+    return fixed
+
+def get_all_assigned_dates(
+    r,
+    solver,
+    assign,
+    days,
+    roles,
+    ns_df=None,
+    wr_df=None,
+    nf_calendar_df=None,
+    extra_preassigned=None
+):
+    """
+    Collect ALL assigned dates for a resident from:
+        - OR-Tools solver assignments
+        - NS preassignments (ns_df)
+        - WR preassignments (wr_df)
+        - NF calendar (nf_calendar_df)
+        - extra_preassigned: list/dict of additional custom assignments
+
+    Returns:
+        A sorted list of unique datetime.date objects.
+    """
+
+    all_dates = set()
+
+    # ----------------------------------------------------
+    # 1) OR-TOOLS ASSIGNED SHIFTS
+    # ----------------------------------------------------
+    for d in days:
+        date_val = d.date() if hasattr(d, "date") else d
+        for role in roles:
+            try:
+                if solver.Value(assign[(d, role, r)]) == 1:
+                    all_dates.add(date_val)
+            except Exception:
+                pass
+
+    # ----------------------------------------------------
+    # 2) NS PREASSIGNMENTS
+    # ----------------------------------------------------
+    if ns_df is not None and isinstance(ns_df, pd.DataFrame) and not ns_df.empty:
+        if "name" in ns_df.columns and "date" in ns_df.columns:
+            ns_dates = ns_df.loc[ns_df["name"] == r, "date"]
+            for d in ns_dates:
+                all_dates.add(pd.to_datetime(d).date())
+
+    # ----------------------------------------------------
+    # 3) WR PREASSIGNMENTS
+    # ----------------------------------------------------
+    if wr_df is not None and isinstance(wr_df, pd.DataFrame) and not wr_df.empty:
+        if "name" in wr_df.columns and "date" in wr_df.columns:
+            wr_dates = wr_df.loc[wr_df["name"] == r, "date"]
+            for d in wr_dates:
+                all_dates.add(pd.to_datetime(d).date())
+
+    # ----------------------------------------------------
+    # 4) NF CALENDAR (night float)
+    # ----------------------------------------------------
+    if nf_calendar_df is not None and isinstance(nf_calendar_df, pd.DataFrame) and not nf_calendar_df.empty:
+        if "name" in nf_calendar_df.columns and "date" in nf_calendar_df.columns:
+            nf_dates = nf_calendar_df.loc[nf_calendar_df["name"] == r, "date"]
+            for d in nf_dates:
+                all_dates.add(pd.to_datetime(d).date())
+
+    # ----------------------------------------------------
+    # 5) EXTRA CUSTOM PREASSIGNMENTS
+    # ----------------------------------------------------
+    if extra_preassigned:
+        # expects either dict: {resident: [dates]}
+        # OR list of (resident, date)
+        if isinstance(extra_preassigned, dict):
+            for d in extra_preassigned.get(r, []):
+                all_dates.add(pd.to_datetime(d).date())
+
+        elif isinstance(extra_preassigned, list):
+            for item in extra_preassigned:
+                if isinstance(item, tuple) and len(item) == 2:
+                    name, d = item
+                    if name == r:
+                        all_dates.add(pd.to_datetime(d).date())
+
+    # ----------------------------------------------------
+    # Return sorted list
+    # ----------------------------------------------------
+    return sorted(all_dates)

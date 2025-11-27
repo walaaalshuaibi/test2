@@ -1,5 +1,6 @@
 import pandas as pd
 from collections import Counter, defaultdict
+import helper
 
 # ------------------------- 
 # Objective 
@@ -73,6 +74,7 @@ def build_objective(
     
     if weekend_vs_tues_thurs_penalties:
         terms.extend([-weekend_vs_tues_thurs_weight * p for p in weekend_vs_tues_thurs_penalties])
+
 
     # Final objective
     model.Maximize(sum(terms))
@@ -215,35 +217,37 @@ def extract_schedule(
     schedule_df["wr"] = schedule_df["date"].apply(lambda d: ", ".join(wr_column_map[d]) if d in wr_column_map else "")
 
     # --- Compute spacing stats per resident (gaps in days between consecutive assigned days) ---
+    # --- Compute spacing stats using ALL assigned sources ---
     per_resident_spacing = {}
     all_gaps = []
-    for r in residents:
-        assigned_dates = []
-        for d in days:
-            date_val = d.date() if hasattr(d, "date") else d
-            assigned = False
-            for role in roles:
-                try:
-                    if solver.Value(assign[(d, role, r)]) == 1:
-                        assigned = True
-                        break
-                except Exception:
-                    pass
-            if assigned:
-                assigned_dates.append(pd.to_datetime(date_val).date())
 
-        assigned_dates = sorted(set(assigned_dates))
+    # --- Compute per-resident spacing ---
+    for r in residents:
+        assigned_dates = helper.get_all_assigned_dates(
+            r=r,
+            solver=solver,
+            assign=assign,
+            days=days,
+            roles=roles,
+            ns_df=ns_residents,
+            wr_df=weekend_rounds_df,
+            nf_calendar_df=nf_calendar_df,
+            extra_preassigned=None
+        )
+
         gaps = [(assigned_dates[i] - assigned_dates[i-1]).days for i in range(1, len(assigned_dates))]
-        num_gaps = len(gaps)
+
         per_resident_spacing[r] = {
             "gaps": gaps,
-            "num_gaps": num_gaps,
-            "avg_gap": (sum(gaps) / num_gaps) if num_gaps > 0 else None,
-            "min_gap": (min(gaps) if gaps else None),
-            "max_gap": (max(gaps) if gaps else None)
+            "num_gaps": len(gaps),
+            "avg_gap": (sum(gaps) / len(gaps) if gaps else None),
+            "min_gap": min(gaps) if gaps else None,
+            "max_gap": max(gaps) if gaps else None
         }
+
         all_gaps.extend(gaps)
 
+    # --- Compute overall spacing ---
     spacing_overall = {
         "num_gaps": len(all_gaps),
         "avg_gap": (sum(all_gaps) / len(all_gaps)) if all_gaps else None,
@@ -251,15 +255,13 @@ def extract_schedule(
         "max_gap": (max(all_gaps) if all_gaps else None)
     }
 
-    #resident_level_map = dict(zip(residents["name"], residents["level"]))
-
-    # --- Build per-resident summary, include spacing stats, per-role counts, weekday counts and Year ---
+    # --- Build per-resident summary ---
     scores_rows = []
     for r in residents:
         spacing = per_resident_spacing.get(r, {})
 
         if limited_shift_residents and r in limited_shift_residents:
-            effective_max_shifts = limited_shift_residents[r]  # use the limited value
+            effective_max_shifts = limited_shift_residents[r]
         else:
             effective_max_shifts = max_shifts.get(r, None) if isinstance(max_shifts, dict) else max_shifts
 
@@ -272,20 +274,30 @@ def extract_schedule(
             "WR Count": wr_counts.get(r, 0),
             "NF Resident": "Yes" if night_counts.get(r, 0) > 2 else "No",
             "NS Resident": "Yes" if r in ns_names else "No"
-            # ,"spacing_avg": spacing.get("avg_gap"),
+            # Individual spacing
+            # , "spacing_avg": spacing.get("avg_gap"),
             # "spacing_min": spacing.get("min_gap"),
             # "spacing_max": spacing.get("max_gap"),
             # "spacing_gaps_count": spacing.get("num_gaps", 0),
+            # # Overall spacing
+            # "spacing_overall_avg": spacing_overall["avg_gap"],
+            # "spacing_overall_min": spacing_overall["min_gap"],
+            # "spacing_overall_max": spacing_overall["max_gap"],
+            # "spacing_overall_gaps_count": spacing_overall["num_gaps"],
             # "weekend_shifts": weekend_counts_per_res.get(r, 0),
             # "thursday_shifts": thursday_counts_per_res.get(r, 0),
             # "tuesday_shifts": tuesday_counts_per_res.get(r, 0),
             # "Year": resident_levels.get(r)
         }
-        # for role in roles:
-        #     col_name = f"role_{role}_count"
-        #     row[col_name] = role_counts.get(r, {}).get(role, 0)
+
+        for role in roles:
+            col_name = f"role_{role}_count"
+            row[col_name] = role_counts.get(r, {}).get(role, 0)
+
         scores_rows.append(row)
 
     scores_df = pd.DataFrame(scores_rows)
 
+
     return schedule_df, scores_df
+

@@ -116,16 +116,17 @@ def schedule_with_ortools_full_modular(
     # 3. Hard constraints (must always hold)
     # -----------------------------------------------------
     
+    # problem
     general.add_basic_constraints(model, assign, days, day_roles, residents)
     
-    # Weekend rounds coverage and blackout rules
+    # Weekend rounds coverage and blackout rulesp
     if optional_rules["WR_assigned_to_EW"] == True:
         wr.add_weekend_rounds_constraint(model, assign, day_roles, weekend_rounds_df, resident_year, preassigned_wr_df, combined_blackout_dict)
     
     general.add_blackout_constraints(model, assign, day_roles, combined_blackout_dict)
     
     # Caps: total shifts, points, weekend limits
-
+    # problem
     general.add_shift_cap_constraints(
         model,
         assign,
@@ -223,11 +224,13 @@ def schedule_with_ortools_full_modular(
         off_days
     )
 
-    # Maximize spacing constraint                                     
-    spacing_soft_penalties = general.add_minimum_spacing_soft_constraint(model, assign, days, day_roles, residents, max_shifts)
-    #spacing_fairness_penalties = None
+    # Maximize spacing constraint  
+    fixed_preassigned = helper.build_fixed_preassigned(nf_calendar_df, ns_residents, weekend_rounds_df, preassigned_ns_df, preassigned_wr_df)
+                                    
+    spacing_soft_penalties = general.add_minimum_spacing_soft_constraint(model, assign, days, day_roles, residents, max_shifts, fixed_preassigned)
     spacing_fairness_penalties = general.add_fairness_soft_constraint(model, assign, days, day_roles, residents, max_shifts)
-    
+
+
     # Tue/Thu fairness penalty (soft)
     hard_day_penalties = general.tuesday_thursday_fairness_penalty(model, assign, days, day_roles, residents)
     diverse_penalties = general.balanced_rotation_penalty(model, assign, days, day_roles, residents)
@@ -250,19 +253,30 @@ def schedule_with_ortools_full_modular(
         spacing_fairness_penalties=spacing_fairness_penalties,
         weekend_vs_tues_thurs_penalties=weekend_vs_tues_thurs_penalties,
         balance_weight = 3.2,
-        hard_day_weight = 1.1,
+        hard_day_weight = 1,
         diverse_weight = 1.2,
         role_pref_weight = 1.2,
         nf_day_pref_weight = 1,
         wr_pref_weight = 1,
         spacing_weight = 3.2,
-        spacing_fairness_weight = 2,
+        spacing_fairness_weight = 2.2,
         weekend_vs_tues_thurs_weight = 1
     )
 
-    print("Resident Blackouts")
-    print(combined_blackout_df[combined_blackout_df['name']=="Donna"])
-
+    # print("Nf RESIDENTS")
+    # print(nf_calendar_df)
+    # print("NS RESIDENTS")
+    # print(ns_residents)
+    # print("WR RESIDENTS")
+    # print(weekend_rounds_df)
+    # print("on-days")
+    # print(on_days)
+    # print("off-days")
+    # print(off_days)
+    # print("Pre-Assign NS")
+    # print(preassigned_ns_df)
+    # print("Pre-Assign WR")
+    # print(preassigned_wr_df)
     # print("Weekend Rounders:")
     # print(weekend_rounds_df)
     # print("Blackouts:")
@@ -320,3 +334,4 @@ def schedule_with_ortools_full_modular(
         resident_levels,
         limited_shift_residents
     )
+
