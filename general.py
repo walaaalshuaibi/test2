@@ -521,17 +521,14 @@ def add_spacing_fairness_soft_constraint(
     model, assign, days, roles, residents, max_shifts, fixed_preassigned
 ):
     """
-    Soft constraint for spacing fairness.
+    Soft constraint for spacing fairness ONLY.
     Penalizes short gaps between ANY two assigned dates
     (preassigned + solver assignments).
     """
 
     penalties = []
 
-    # Precompute real date objects for your gap math
-    real_dates = {d: d for d in days}
-
-    # Build assigned_days as bool vars for solver assignments
+    # Build solver-controlled assigned-day indicator vars
     assigned_days = {}
     for r in residents:
         assigned_days[r] = {}
@@ -540,68 +537,60 @@ def add_spacing_fairness_soft_constraint(
             model.Add(b == sum(assign[(d, role, r)] for role in roles))
             assigned_days[r][d] = b
 
-    # Convert fixed_preassigned to fast lookup
+    # Convert fixed_preassigned to lookup
     fixed_lookup = {r: set(dates) for r, dates in fixed_preassigned.items()}
 
-    # -------------------------------------------------------
-    # Spacing fairness:
-    # Penalize small gaps between ALL assigned days:
-    # (Fixed preassigned + solver assignments)
-    # -------------------------------------------------------
+    # Spacing penalties
     for r in residents:
-        # mark preassigned as always-assigned days
         pre = fixed_lookup.get(r, set())
 
         for i in range(len(days)):
             for j in range(i + 1, len(days)):
-
                 d1 = days[i]
                 d2 = days[j]
-                gap = (real_dates[d2] - real_dates[d1]).days
 
+                gap = (d2 - d1).days
                 if gap <= 0:
                     continue
 
-                # Detect assigned-by-solver
                 v1 = assigned_days[r][d1]
                 v2 = assigned_days[r][d2]
 
-                # Detect preassigned (constant 1 if preassigned)
+                # ------------------------------------
+                # Compute (assigned or preassigned)
+                # ------------------------------------
+                # (v1 OR p1)
+                w1 = model.NewBoolVar(f"{r}_assigned_or_pre_{d1}")
                 p1 = 1 if d1 in pre else 0
-                p2 = 1 if d2 in pre else 0
-
-                # both assigned? (solver OR preassigned)
-                both_assigned = model.NewBoolVar(f"spacing_both_{r}_{d1}_{d2}")
-
-                # both_assigned = (v1 or p1) AND (v2 or p2)
-                # Create booleans for (v1 or p1) and (v2 or p2)
-                w1 = model.NewBoolVar(f"{r}_works_or_pre_d1_{d1}")
-                w2 = model.NewBoolVar(f"{r}_works_or_pre_d2_{d2}")
-
-                # w1 = max(v1, p1)
                 model.Add(w1 >= v1)
                 model.Add(w1 >= p1)
                 model.Add(w1 <= v1 + p1)
 
-                # w2 = max(v2, p2)
+                # (v2 OR p2)
+                w2 = model.NewBoolVar(f"{r}_assigned_or_pre_{d2}")
+                p2 = 1 if d2 in pre else 0
                 model.Add(w2 >= v2)
                 model.Add(w2 >= p2)
                 model.Add(w2 <= v2 + p2)
 
-                # both_assigned = w1 AND w2
-                model.Add(both_assigned >= w1 + w2 - 1)
-                model.Add(both_assigned <= w1)
-                model.Add(both_assigned <= w2)
+                # both assigned
+                both = model.NewBoolVar(f"spacing_both_{r}_{d1}_{d2}")
+                model.Add(both >= w1 + w2 - 1)
+                model.Add(both <= w1)
+                model.Add(both <= w2)
 
-                # Weight: small gap → big penalty
+                # --------------------------
+                # Penalty ∝ 1 / gap
+                # --------------------------
                 weight = int(1000 / gap)
 
                 p = model.NewIntVar(0, weight, f"spacing_penalty_{r}_{d1}_{d2}")
-                model.Add(p == weight * both_assigned)
+                model.Add(p == weight * both)
 
                 penalties.append(p)
 
     return penalties
+
 
 
 def weekend_vs_tue_thu_penalty(model, assign, days, roles, residents, weekend_days, threshold=2):
