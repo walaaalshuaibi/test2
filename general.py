@@ -47,72 +47,22 @@ def add_blackout_constraints(model, assign, roles, blackout_dict):
                     model.Add(assign[(day, role, resident)] == 0)
 
 
-def add_shift_cap_constraints(
-    model, assign, days, roles, residents, 
-    max_shifts, max_points, weekend_days, weekend_limits, 
-    ns_residents_df=None, wr_df=None, nf_calendar_df=None, extra_preassigned=None
-):
-    """
-    Add per-resident shift constraints with debug prints:
-      1. Minimum 1 shift per resident
-      2. Maximum shifts, points, weekend shifts
-    Accounts for preassigned shifts (NS, WR, NF, extra_preassigned).
-    """
-
-    print("=== Adding shift cap constraints ===")
-    
-    for r in residents:
-
-        # --- Preassigned shifts ---
-        preassigned_dates = set(helper.get_all_assigned_dates(
-            r=r,
-            solver=None,  # only care about preassigned here
-            assign=assign,
-            days=days,
-            roles=roles,
-            ns_df=ns_residents_df,
-            wr_df=wr_df,
-            nf_calendar_df=nf_calendar_df,
-            extra_preassigned=extra_preassigned
-        ))
-        preassigned_count = len(preassigned_dates)
-        preassigned_weekends = len([d for d in preassigned_dates if d in weekend_days])
-
-        print(f"\nResident: {r}")
-        print(f"  Preassigned shifts: {preassigned_count} ({sorted(preassigned_dates)})")
-        print(f"  Preassigned weekend shifts: {preassigned_weekends}")
-        print(f"  Max shifts: {max_shifts[r]}, Max points: {max_points[r]}, Weekend limit: {weekend_limits[r]}")
-
-        # --- Total shifts expression ---
-        solver_shifts = sum(assign[(d, role, r)] for d in days for role in roles)
-        total_shifts = solver_shifts + preassigned_count
-        print(f"  Total shifts expression: solver + preassigned = {total_shifts}")
-
-        # Minimum 1 shift
-        model.Add(total_shifts >= 1)
-
-        # Maximum shifts
-        if preassigned_count >= max_shifts[r]:
-            print(f"  ⚠️ Preassigned shifts exceed max: {preassigned_count} >= {max_shifts[r]}")
-            model.Add(solver_shifts == 0)
-        else:
-            model.Add(total_shifts <= max_shifts[r])
-
-        # --- Total points ---
-        solver_points = helper.resident_score_expr(assign, days, roles, r, weekend_days, ns_residents_df)
-        total_points = solver_points + preassigned_count  # adjust if needed for weekend double points
-        print(f"  Total points expression: {total_points}")
-        model.Add(total_points <= max_points[r])
-        model.Add(total_points >= 1)
-
-        # --- Weekend shifts ---
-        solver_weekend_shifts = sum(assign[(d, role, r)] for d in weekend_days for role in roles)
-        total_weekend_shifts = solver_weekend_shifts + preassigned_weekends
-        print(f"  Total weekend shifts expression: {total_weekend_shifts}")
-        model.Add(total_weekend_shifts <= weekend_limits[r])
-
-    print("=== Done adding shift cap constraints ===")
-
+def add_shift_cap_constraints( model, assign, days, roles, residents, max_shifts, max_points, weekend_days, weekend_limits, weekend_rounds_df=None, ns_residents_df=None ): 
+    """ Add constraints to enforce per-resident limits: 
+    1. Minimum and maximum total shifts 
+    2. Minimum and maximum weighted points (weekends count double) 
+    3. Maximum weekend shifts """ 
+    for r in residents: 
+        total_shifts = sum(assign[(d, role, r)] for d in days for role in roles) 
+        total_points = helper.resident_score_expr(assign, days, roles, r, weekend_days, weekend_rounds_df, ns_residents_df) 
+        weekend_shifts = sum(assign[(d, role, r)] for d in weekend_days for role in roles) 
+        # --- Minimums --- 
+        model.Add(total_shifts > 0) 
+        model.Add(total_points > 0) 
+        # --- Maximums --- 
+        model.Add(total_shifts <= max_shifts[r]) 
+        model.Add(total_points <= max_points[r]) 
+        model.Add(weekend_shifts <= weekend_limits[r])
 
 def add_no_consecutive_weekend_constraint(
     model,
@@ -171,6 +121,7 @@ def add_cooldown_constraints(model, assign, days, roles, residents, cooldown=3):
     """
     Hard constraint: if a resident works on day d, they cannot work for the next `cooldown` days.
     """
+    cooldown=cooldown+1
     for r in residents:
         for i, d in enumerate(days):
             # BoolVar: resident works on day d
@@ -460,145 +411,197 @@ def add_role_preferences_by_level(model, assign, roles, days, residents, residen
 
 
 def add_minimum_spacing_soft_constraint(
-    model, assign, days, roles, residents, max_shifts,
-    ns_df=None, wr_df=None, nf_calendar_df=None, extra_preassigned=None
+    model, assign, days, roles, residents, max_shifts, fixed_preassigned
 ):
     """
-    Soft spacing constraint considering all assignments (solver + preassigned).
-    Penalizes residents for being assigned too close together.
-
-    Returns:
-        penalties: list of IntVars representing spacing penalties
+    Soft minimum-spacing constraints.
+    - Includes BOTH preassigned and solver assignments.
+    - Penalizes assignments that occur too close together.
     """
 
     penalties = []
-
     sorted_days = sorted(days)
 
+    # Convert preassigned map into: fixed[r] = {dates}
+    fixed_map = {r: set() for r in residents}
+    for (d, r) in fixed_preassigned:
+        fixed_map[r].add(d)
+
+    # -------------------------------
+    # MAIN LOOP PER RESIDENT
+    # -------------------------------
     for r in residents:
-        # Compute min_gap per resident
+
         min_gap_r = max(1, 30 // max_shifts[r])
 
-        # Get all assigned dates (preassigned + solver)
-        all_assigned = helper.get_all_assigned_dates(
-            r=r,
-            solver=model,
-            assign=assign,
-            days=days,
-            roles=roles,
-            ns_df=ns_df,
-            wr_df=wr_df,
-            nf_calendar_df=nf_calendar_df,
-            extra_preassigned=extra_preassigned
-        )
+        # Collect solver-controlled assignment variables grouped by day
+        solver_map = {d: [] for d in sorted_days}
+        for d in sorted_days:
+            for role in roles:
+                solver_map[d].append(assign[(d, role, r)])
 
-        all_assigned = sorted(all_assigned)
-
-        # ----------------------
-        # 1) Pairwise proportional penalties
-        # ----------------------
-        for i in range(len(all_assigned)):
-            for j in range(i + 1, len(all_assigned)):
-                d1, d2 = all_assigned[i], all_assigned[j]
+        # -------------------------------------
+        # 1) PAIRWISE penalty: (d1, d2) too close
+        # -------------------------------------
+        for i in range(len(sorted_days)):
+            for j in range(i + 1, len(sorted_days)):
+                d1, d2 = sorted_days[i], sorted_days[j]
                 gap = (d2 - d1).days
+                if gap >= min_gap_r:
+                    continue  # safe distance → no penalty needed
 
-                if gap < min_gap_r:
-                    # Determine if either day is preassigned
-                    preassigned_days = set()
-                    if ns_df is not None:
-                        preassigned_days.update(pd.to_datetime(ns_df.loc[ns_df["name"] == r, "date"]).dt.date)
-                    if wr_df is not None:
-                        preassigned_days.update(pd.to_datetime(wr_df.loc[wr_df["name"] == r, "date"]).dt.date)
-                    if nf_calendar_df is not None:
-                        preassigned_days.update(pd.to_datetime(nf_calendar_df.loc[nf_calendar_df["name"] == r, "date"]).dt.date)
-                    if extra_preassigned:
-                        if isinstance(extra_preassigned, dict):
-                            preassigned_days.update([pd.to_datetime(d).date() for d in extra_preassigned.get(r, [])])
-                        elif isinstance(extra_preassigned, list):
-                            for item in extra_preassigned:
-                                if isinstance(item, tuple) and item[0] == r:
-                                    preassigned_days.add(pd.to_datetime(item[1]).date())
+                d1_fixed = d1 in fixed_map[r]
+                d2_fixed = d2 in fixed_map[r]
 
-                    if d1 in preassigned_days and d2 in preassigned_days:
-                        continue  # skip both preassigned
-                    elif d1 in preassigned_days or d2 in preassigned_days:
-                        # penalize only solver-controlled day
-                        solver_day = d1 if d2 in preassigned_days else d2
-                        for role in roles:
-                            penalties.append(assign[(solver_day, role, r)])
-                    else:
-                        # Both solver-controlled → proportional penalty
-                        penalty_var = model.NewIntVar(1, min_gap_r - 1, f"penalty_{r}_{d1}_{d2}")
-                        model.Add(penalty_var == min_gap_r - gap)
-                        penalties.append(penalty_var)
+                # Case A: both preassigned → ignore
+                if d1_fixed and d2_fixed:
+                    continue
 
-        # ----------------------
-        # 2) Sliding window max-1 enforcement
-        # ----------------------
+                # Case B: one fixed, one solver → penalize solver assignments
+                if d1_fixed and not d2_fixed:
+                    penalties.extend(solver_map[d2])
+                    continue
+                if d2_fixed and not d1_fixed:
+                    penalties.extend(solver_map[d1])
+                    continue
+
+                # Case C: both solver-controlled → add proportional penalty
+                # penalty = (min_gap - gap) * count(d1) * count(d2)
+                weight = (min_gap_r - gap)
+
+                for v1 in solver_map[d1]:
+                    for v2 in solver_map[d2]:
+                        # product: v1 AND v2
+                        both = model.NewBoolVar(f"pair_{r}_{d1}_{d2}")
+                        model.AddBoolAnd([v1, v2]).OnlyEnforceIf(both)
+                        model.Add(both == 0).OnlyEnforceIf(v1.Not())
+                        model.Add(both == 0).OnlyEnforceIf(v2.Not())
+
+                        # scaled penalty
+                        p = model.NewIntVar(0, weight, f"penalty_{r}_{d1}_{d2}")
+                        model.Add(p == weight * both)
+                        penalties.append(p)
+
+        # --------------------------------------
+        # 2) Sliding window (max 1 shift inside window)
+        # --------------------------------------
         for i in range(len(sorted_days) - min_gap_r + 1):
-            window_days = sorted_days[i:i + min_gap_r]
-            window_vars = [assign[(d, role, r)] for d in window_days for role in roles]
-            if not window_vars:
+            window_days = sorted_days[i : i + min_gap_r]
+            vars_in_window = []
+
+            for d in window_days:
+                vars_in_window.extend(solver_map[d])
+
+            # also count fixed (static +1)
+            fixed_count = sum(1 for d in window_days if d in fixed_map[r])
+
+            # If fixed_count > 1, unavoidable → skip
+            if fixed_count > 1:
                 continue
-            window_count = model.NewIntVar(0, len(window_vars), f"window_count_{r}_{i}")
-            model.Add(window_count == sum(window_vars))
-            overassign = model.NewIntVar(0, len(window_vars), f"overassign_{r}_{i}")
-            model.AddMaxEquality(overassign, [window_count - 1, 0])
-            penalties.append(overassign)
+
+            # window_count = solver_boxes + fixed_count
+            if vars_in_window:
+                window_sum = model.NewIntVar(0, len(vars_in_window), f"w_sum_{r}_{i}")
+                model.Add(window_sum == sum(vars_in_window))
+
+                total = model.NewIntVar(0, len(vars_in_window) + fixed_count, f"w_total_{r}_{i}")
+                model.Add(total == window_sum + fixed_count)
+
+                # Penalize (total − 1) if > 1
+                over = model.NewIntVar(0, len(vars_in_window), f"w_over_{r}_{i}")
+                model.AddMaxEquality(over, [total - 1, 0])
+                penalties.append(over)
 
     return penalties
 
 
 
-def add_fairness_soft_constraint(
-    model, assign, days, roles, residents, max_shifts,
-    ns_df=None, wr_df=None, nf_calendar_df=None, extra_preassigned=None
+
+def add_spacing_fairness_soft_constraint(
+    model, assign, days, roles, residents, max_shifts, fixed_preassigned
 ):
     """
-    Fairness soft constraint:
-    - Compare residents with same max_shifts.
-    - Penalize differences in total assignments (solver + preassigned).
+    Soft constraint for spacing fairness.
+    Penalizes short gaps between ANY two assigned dates
+    (preassigned + solver assignments).
     """
 
     penalties = []
 
-    # Group residents by max_shifts
-    groups = defaultdict(list)
+    # Precompute real date objects for your gap math
+    real_dates = {d: d for d in days}
+
+    # Build assigned_days as bool vars for solver assignments
+    assigned_days = {}
     for r in residents:
-        groups[max_shifts[r]].append(r)
+        assigned_days[r] = {}
+        for d in days:
+            b = model.NewBoolVar(f"{r}_works_day_{d}")
+            model.Add(b == sum(assign[(d, role, r)] for role in roles))
+            assigned_days[r][d] = b
 
-    # Compute total assignments per resident as IntVar + preassigned count
-    total_assignments = {}
+    # Convert fixed_preassigned to fast lookup
+    fixed_lookup = {r: set(dates) for r, dates in fixed_preassigned.items()}
+
+    # -------------------------------------------------------
+    # Spacing fairness:
+    # Penalize small gaps between ALL assigned days:
+    # (Fixed preassigned + solver assignments)
+    # -------------------------------------------------------
     for r in residents:
-        # Solver-controlled assignments
-        solver_assign_var = model.NewIntVar(0, len(days)*len(roles), f"total_solver_{r}")
-        model.Add(solver_assign_var == sum(assign[(d, role, r)] for d in days for role in roles))
+        # mark preassigned as always-assigned days
+        pre = fixed_lookup.get(r, set())
 
-        # Preassigned count
-        preassigned_count = len(helper.get_all_assigned_dates(
-            r=r, solver=None, assign=assign, days=[], roles=[],
-            ns_df=ns_df, wr_df=wr_df, nf_calendar_df=nf_calendar_df,
-            extra_preassigned=extra_preassigned
-        ))
+        for i in range(len(days)):
+            for j in range(i + 1, len(days)):
 
-        # Total = solver + preassigned (constant added)
-        total_assignments[r] = solver_assign_var + preassigned_count
+                d1 = days[i]
+                d2 = days[j]
+                gap = (real_dates[d2] - real_dates[d1]).days
 
-    # Add fairness penalties within each group
-    for k, group in groups.items():
-        if len(group) <= 1:
-            continue
+                if gap <= 0:
+                    continue
 
-        for i in range(len(group)):
-            for j in range(i+1, len(group)):
-                r1, r2 = group[i], group[j]
-                diff_var = model.NewIntVar(0, len(days)*len(roles), f"fair_diff_{r1}_{r2}")
-                model.AddAbsEquality(diff_var, total_assignments[r1] - total_assignments[r2])
-                penalties.append(diff_var)
+                # Detect assigned-by-solver
+                v1 = assigned_days[r][d1]
+                v2 = assigned_days[r][d2]
+
+                # Detect preassigned (constant 1 if preassigned)
+                p1 = 1 if d1 in pre else 0
+                p2 = 1 if d2 in pre else 0
+
+                # both assigned? (solver OR preassigned)
+                both_assigned = model.NewBoolVar(f"spacing_both_{r}_{d1}_{d2}")
+
+                # both_assigned = (v1 or p1) AND (v2 or p2)
+                # Create booleans for (v1 or p1) and (v2 or p2)
+                w1 = model.NewBoolVar(f"{r}_works_or_pre_d1_{d1}")
+                w2 = model.NewBoolVar(f"{r}_works_or_pre_d2_{d2}")
+
+                # w1 = max(v1, p1)
+                model.Add(w1 >= v1)
+                model.Add(w1 >= p1)
+                model.Add(w1 <= v1 + p1)
+
+                # w2 = max(v2, p2)
+                model.Add(w2 >= v2)
+                model.Add(w2 >= p2)
+                model.Add(w2 <= v2 + p2)
+
+                # both_assigned = w1 AND w2
+                model.Add(both_assigned >= w1 + w2 - 1)
+                model.Add(both_assigned <= w1)
+                model.Add(both_assigned <= w2)
+
+                # Weight: small gap → big penalty
+                weight = int(1000 / gap)
+
+                p = model.NewIntVar(0, weight, f"spacing_penalty_{r}_{d1}_{d2}")
+                model.Add(p == weight * both_assigned)
+
+                penalties.append(p)
 
     return penalties
-
-
 
 
 def weekend_vs_tue_thu_penalty(model, assign, days, roles, residents, weekend_days, threshold=2):

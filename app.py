@@ -160,7 +160,7 @@ with tab2:
             },
             "r1": {
                 "res_shift_max": 6,
-                "res_points_max": 8,
+                "res_points_max": 7,
                 "nf_shift_max": 1,
                 "nf_points_max": 2,
                 "nf_buffer": 5,
