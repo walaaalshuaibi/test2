@@ -127,19 +127,18 @@ def schedule_with_ortools_full_modular(
     
     # Caps: total shifts, points, weekend limits
     # problem
-    # general.add_shift_cap_constraints(
-    #     model,
-    #     assign,
-    #     days,
-    #     day_roles,
-    #     residents,
-    #     max_shifts,
-    #     max_points,
-    #     weekend_days,
-    #     weekend_limits,
-    #     weekend_rounds_df=weekend_rounds_df,
-    #     ns_residents_df=ns_residents
-    # )
+    general.add_shift_cap_constraints(
+        model,
+        assign,
+        days,
+        day_roles,
+        residents,
+        max_shifts,
+        max_points,
+        weekend_days,
+        weekend_limits,
+        ns_residents_df=ns_residents
+    )
     # -----------------------------------------------------
     # 3b. No consecutive groups (days + Fri/Sat weekends)
     # -----------------------------------------------------
@@ -227,10 +226,9 @@ def schedule_with_ortools_full_modular(
 
     # Maximize spacing constraint  
     fixed_preassigned = helper.build_fixed_preassigned(nf_calendar_df, ns_residents, weekend_rounds_df, preassigned_ns_df, preassigned_wr_df)
-
-    spacing_soft_penalties=None                                
-    #spacing_soft_penalties = general.add_minimum_spacing_soft_constraint(model, assign, days, day_roles, residents, max_shifts, fixed_preassigned)
-    spacing_fairness_penalties = general.add_spacing_fairness_soft_constraint(model, assign, days, day_roles, residents, max_shifts, fixed_preassigned)
+                                    
+    spacing_soft_penalties = general.add_minimum_spacing_soft_constraint(model, assign, days, day_roles, residents, max_shifts, fixed_preassigned)
+    spacing_fairness_penalties = general.add_fairness_soft_constraint(model, assign, days, day_roles, residents, max_shifts)
 
 
     # Tue/Thu fairness penalty (soft)
@@ -254,7 +252,7 @@ def schedule_with_ortools_full_modular(
         spacing_penalties=spacing_soft_penalties,
         spacing_fairness_penalties=spacing_fairness_penalties,
         weekend_vs_tues_thurs_penalties=weekend_vs_tues_thurs_penalties,
-        balance_weight = 4,
+        balance_weight = 3.2,
         hard_day_weight = 1,
         diverse_weight = 1.2,
         role_pref_weight = 1.2,
