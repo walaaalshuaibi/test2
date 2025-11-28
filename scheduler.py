@@ -127,18 +127,18 @@ def schedule_with_ortools_full_modular(
     
     # Caps: total shifts, points, weekend limits
     # problem
-    general.add_shift_cap_constraints(
-        model,
-        assign,
-        days,
-        day_roles,
-        residents,
-        max_shifts,
-        max_points,
-        weekend_days,
-        weekend_limits,
-        ns_residents_df=ns_residents
-    )
+    # general.add_shift_cap_constraints(
+    #     model,
+    #     assign,
+    #     days,
+    #     day_roles,
+    #     residents,
+    #     max_shifts,
+    #     max_points,
+    #     weekend_days,
+    #     weekend_limits,
+    #     ns_residents_df=ns_residents
+    # )
     # -----------------------------------------------------
     # 3b. No consecutive groups (days + Fri/Sat weekends)
     # -----------------------------------------------------
