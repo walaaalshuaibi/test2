@@ -4,15 +4,14 @@ import helper
 def add_weekend_rounds_constraint(model, assign, roles, weekend_rounds_df, resident_year, preassigned_wr_df=None, combined_blackout_dict=None):
     """ 
     Add constraints to enforce weekend round assignments. 
-    For each row in weekend_rounds_df:
-    - Ensure the specified resident is assigned to the 'EW Day' role on the given date.
-    - Raise an error if 'EW Day' is not in the roles list.
+    - Seniors are pre-assigned EW
+    - other roles based on the pre-assigned wr df
     """
     
     # Ensure 'Date' column is in datetime format
     weekend_rounds_df["date"] = pd.to_datetime(weekend_rounds_df['date']).dt.normalize()
 
-    # --- STEP 1: Handle preassigned WR residents ---
+    # STEP 1: Handle preassigned WR residents
     if preassigned_wr_df is not None and not preassigned_wr_df.empty:
         preassigned_wr_df["date"] = pd.to_datetime(preassigned_wr_df["date"]).dt.normalize()
 
@@ -45,12 +44,12 @@ def add_weekend_rounds_constraint(model, assign, roles, weekend_rounds_df, resid
                         if before_len != after_len:
                             print(f"🟢 Removed blackout (dict) for {resident} on {date.date()} (preassigned {role})")
 
-            # --- Defensive check for invalid roles ---
+            # Defensive check for invalid roles 
             if role not in roles:
                 print(f"⚠️ Skipping preassigned WR for {resident}: role '{role}' not found in roles list.")
                 continue
 
-            # --- Fix the assignment ---
+            # Fix the assignment 
             model.Add(assign[(date, role, resident)] == 1)
 
             # Prevent anyone else from taking that same date-role
@@ -158,30 +157,38 @@ def build_weekend_round_assignments(residents_df, start_date, resident_year, r2_
 
     return assignments
 
-def add_wr_soft_constraints(model, assign, days, roles, weekend_rounds_df):
+def add_wr_soft_constraints(model, assign, days, roles, weekend_rounds_df, weekend_days):
     """
     Soft constraint: if a resident already has 2 WR dates in weekend_rounds_df,
-    discourage assigning them to any additional weekend shifts.
+    discourage assigning them to any additional weekend shifts (Fri, Sat),
+    and also discourage Thursdays separately.
     """
     penalties = []
 
     # Count WR dates per resident
     wr_counts = weekend_rounds_df.groupby("name")["date"].nunique().to_dict()
-    weekend_days = {"Fri", "Sat"}
 
     for resident, count in wr_counts.items():
         if count >= 2:
             for d in days:
-                if d.strftime("%a") in weekend_days:
+                # Case 1: weekend days (Fri, Sat)
+                if d in weekend_days:
                     for role in roles:
                         if (d, role, resident) in assign:
                             var = assign[(d, role, resident)]
-                            # Create a penalty variable equal to var (1 if assigned, 0 if not)
                             penalty_var = model.NewIntVar(0, 1, f"wr_penalty_{resident}_{d}_{role}")
                             model.Add(penalty_var == var)
                             penalties.append(penalty_var)
 
-    # Scale penalties by weight later in the objective
+                # Case 2: Thursdays only
+                if d.strftime("%a") == "Thu":
+                    for role in roles:
+                        if (d, role, resident) in assign:
+                            var = assign[(d, role, resident)]
+                            penalty_var = model.NewIntVar(0, 1, f"thu_penalty_{resident}_{d}_{role}")
+                            model.Add(penalty_var == var)
+                            penalties.append(penalty_var)
+
     return penalties
 
 

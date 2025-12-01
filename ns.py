@@ -21,22 +21,22 @@ def fill_ns_cells(
     """
     import pandas as pd
     import random
-    import blackout  # assuming your helper module
+    import blackout
 
     if nf_cols is None:
         nf_cols = ["NF1", "NF2", "NF3"]
 
-    # --- Step 1: Build resident pool ---
+    # Step 1: Build resident pool
     available_residents = [r for r in non_nf_residents if r not in wr_residents]
     random.shuffle(available_residents)
 
-    # --- Step 2: Build blackout lookup ---
+    # Step 2: Build blackout lookup
     blackout_lookup = blackout.build_blackout_lookup(blackout_df) if blackout_df is not None else {}
 
     ns_records = []
     nf_assigned = set()
 
-    # --- Step 3a: Fill preassigned slots first ---
+    # Step 3a: Fill preassigned slots first
     if preassigned_ns_df is not None and not preassigned_ns_df.empty:
         for _, row in preassigned_ns_df.iterrows():
             date = pd.to_datetime(row["date"])
@@ -58,7 +58,7 @@ def fill_ns_cells(
                 if resident in available_residents:
                     available_residents.remove(resident)
 
-    # --- Step 3b: Fill remaining empty NF slots ---
+    # Step 3b: Fill remaining empty NF slots 
     for col in nf_cols:
         for idx, val in nf_calendar_df[col].items():
             if val == "" and available_residents:
@@ -72,16 +72,8 @@ def fill_ns_cells(
 
                 if resident_year == "r1":
                     assigned = assign_ns_juniors(
-                        date,
-                        candidates,
-                        blackout_lookup,
-                        resident_level,
-                        col,
-                        nf_residents=nf_residents,
-                        nf_max_limit=nf_max_limit,
-                        nf_assigned=nf_assigned,
-                        nf_blackout_lookup=nf_blackout_lookup
-                    )
+                        date, available_residents, blackout_lookup, nf_residents=nf_residents, nf_max_limit=nf_max_limit, 
+                        nf_assigned=nf_assigned, nf_blackout_lookup=nf_blackout_lookup, wr_residents=wr_residents)
                 elif resident_year == "seniors":
                     assigned = assign_ns_seniors(date, candidates, blackout_lookup, resident_level, col)
                 else:
@@ -137,18 +129,21 @@ def assign_ns_seniors(date, available_residents, blackout_lookup, resident_level
 
     return chosen
 
-def assign_ns_juniors(date, available_residents, blackout_lookup, resident_level, role,
-                      nf_residents=None, nf_max_limit=None, nf_assigned=None,
-                      nf_blackout_lookup=None):
+def assign_ns_juniors(date, available_residents, blackout_lookup, nf_residents=None, 
+                      nf_max_limit=None, nf_assigned=None, nf_blackout_lookup=None, wr_residents=None):
     """Assign one resident to NS, respecting NF blackout + previous/next NS days."""
 
     if nf_assigned is None:
         nf_assigned = set()
 
+    print("WR RESIDENTS")
+    for r in nf_residents:
+        print(r)
+
     # Extend available_residents with NF residents if allowed
     if nf_residents and nf_max_limit and nf_max_limit[0] > 0:
         for r in nf_residents:
-            if r not in available_residents:
+            if r not in available_residents and r not in wr_residents:
                 available_residents.append(r)
 
     # --- Filter candidates ---

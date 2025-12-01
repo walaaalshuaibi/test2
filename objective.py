@@ -9,7 +9,8 @@ import helper
 def build_objective(
     model, 
     score_vars, 
-    balance_penalties=None, 
+    non_nf_balance_penalties=None,
+    nf_balance_penalties=None, 
     hard_day_penalties=None, 
     diverse_penalties=None, 
     role_pref_penalties=None, 
@@ -18,7 +19,8 @@ def build_objective(
     spacing_penalties=None,
     spacing_fairness_penalties=None,
     weekend_vs_tues_thurs_penalties=None,
-    balance_weight=10, 
+    non_nf_balance_weight = 1000000,
+    nf_balance_weight = 10000,
     hard_day_weight=5, 
     diverse_weight=5, 
     role_pref_weight=10,
@@ -40,50 +42,46 @@ def build_objective(
     terms = []
     
     # Base objective: maximize total scores
-    terms.extend(score_vars.values())
+    #terms.extend(score_vars.values())
     
     # Balance penalties
-    if balance_penalties:
-        terms.extend([-balance_weight * p for p in balance_penalties])
+    if non_nf_balance_penalties:
+        terms.extend([non_nf_balance_weight * p for p in non_nf_balance_penalties])
+
+    if nf_balance_penalties:
+        terms.extend([nf_balance_weight * p for p in nf_balance_penalties])
     
     # Hard day penalties
     if hard_day_penalties:
-        terms.extend([-hard_day_weight * p for p in hard_day_penalties])
+        terms.extend([hard_day_weight * p for p in hard_day_penalties])
     
     # Diverse rotation penalties
     if diverse_penalties:
-        terms.extend([-diverse_weight * p for p in diverse_penalties])
+        terms.extend([diverse_weight * p for p in diverse_penalties])
     
     # Role preferences penalties
     if role_pref_penalties:
-        terms.extend([-role_pref_weight * p for p in role_pref_penalties])
+        terms.extend([role_pref_weight * p for p in role_pref_penalties])
 
     # NF day preference 
     if nf_day_pref_penalties:
-        terms.extend([-nf_day_pref_weight * p for p in nf_day_pref_penalties])
+        terms.extend([nf_day_pref_weight * p for p in nf_day_pref_penalties])
 
     # WR preference 
     if wr_penalties:
-        terms.extend([-wr_pref_weight * p for p in wr_penalties])
+        terms.extend([wr_pref_weight * p for p in wr_penalties])
 
     if spacing_penalties:
-        terms.extend([-spacing_weight * p for p in spacing_penalties])
+        terms.extend([spacing_weight * p for p in spacing_penalties])
 
     if spacing_fairness_penalties:
-        terms.extend([-spacing_fairness_weight * p for p in spacing_fairness_penalties])
+        terms.extend([spacing_fairness_weight * p for p in spacing_fairness_penalties])
     
     if weekend_vs_tues_thurs_penalties:
-        terms.extend([-weekend_vs_tues_thurs_weight * p for p in weekend_vs_tues_thurs_penalties])
-
+        terms.extend([weekend_vs_tues_thurs_weight * p for p in weekend_vs_tues_thurs_penalties])
 
     # Final objective
-    model.Maximize(sum(terms))
-
-import pandas as pd
-from collections import defaultdict
-
-import pandas as pd
-from collections import defaultdict
+    model.Minimize(sum(terms))
 
 def extract_schedule(
     solver, 
@@ -274,7 +272,7 @@ def extract_schedule(
             "WR Count": wr_counts.get(r, 0),
             "NF Resident": "Yes" if night_counts.get(r, 0) > 2 else "No",
             "NS Resident": "Yes" if r in ns_names else "No"
-            # Individual spacing
+            # # Individual spacing
             # , "spacing_avg": spacing.get("avg_gap"),
             # "spacing_min": spacing.get("min_gap"),
             # "spacing_max": spacing.get("max_gap"),
