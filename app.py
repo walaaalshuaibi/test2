@@ -322,7 +322,7 @@ with tab2:
             resident_list = st.session_state["residents_df"]["Name"].dropna().tolist()
             ns_name = st.selectbox("Select Resident", resident_list, key="ns_name_input")
             ns_date = st.date_input("Select Date", value=date.today(), key="ns_date_input")
-            ns_role = st.selectbox("Select Role", general.extract_shift_columns()[0], key="ns_role_input")
+            ns_role = st.selectbox("Select Role", general.extract_shift_columns(resident_year=resident_year)[0], key="ns_role_input")
             
             if st.button("Add NS Preassignment", key="add_ns_preassign") and ns_name:
                 new_row = pd.DataFrame([[ns_name, ns_date, ns_role]], columns=["name", "date", "role"])
@@ -371,7 +371,7 @@ with tab2:
                     wr_col_value = row.get("Weekend round")
                     if wr_col_value:
                         expanded_dates = [d.date() if isinstance(d, pd.Timestamp) else d
-                                        for d in helper.expand_dates(wr_col_value, base_year=2025)]
+                                        for d in helper.expand_dates(wr_col_value, base_year=start_date.year, anchor_month=start_date.month)]
                         if selected_date in expanded_dates:
                             available_residents.append(row["Name"])
 
@@ -382,7 +382,7 @@ with tab2:
                     wr_name = None
 
                 if wr_name:
-                    wr_role = st.selectbox("Select Role", general.extract_shift_columns()[1], key="wr_role_input")
+                    wr_role = st.selectbox("Select Role", general.extract_shift_columns(resident_year=resident_year)[1], key="wr_role_input")
                     if st.button("Add WR Preassignment", key="add_wr_preassign"):
                         new_row = pd.DataFrame([[wr_name, selected_date, wr_role]], columns=["name", "date", "role"])
                         st.session_state["preassigned_wr"] = pd.concat(

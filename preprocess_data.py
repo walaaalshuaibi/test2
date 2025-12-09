@@ -51,10 +51,9 @@ def prepare_data(residents_df, start_date, num_weeks, resident_year, nf_max_limi
     days = pd.date_range(start_date, start_date + pd.Timedelta(weeks=num_weeks) - pd.Timedelta(days=1))
     weekend_days = set(d for d in days if d.strftime('%a') in ['Fri', 'Sat'])
 
-    nf_roles, day_roles = general.extract_shift_columns()
+    nf_roles, day_roles = general.extract_shift_columns(resident_year=resident_year)
     nf_roles = [r.strip().lower() for r in nf_roles]
     day_roles = [r.strip().lower() for r in day_roles]
-
 
     return (
         residents_df, residents, resident_max_limit, nf_max_limit, optional_rules, 

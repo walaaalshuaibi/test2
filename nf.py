@@ -1,35 +1,55 @@
 import pandas as pd
 import helper
+from datetime import timedelta
 
-def build_nf_calendar(residents_df, start_date, buffers, nf_cols=None):
-    """ 
-    Build an NF calendar from residents_df and expand into NF1..NF{n_slots} columns.
+def build_nf_calendar(residents_df, start_date, buffers=None, nf_cols=None):
     """
-    
+    Build NF calendar that includes all NF assignments, including cross-year,
+    and ensures residents with NF dates in the next year are included.
+    """
+
     if nf_cols is None:
         nf_cols = ["nf1", "nf2", "nf3"]
-    
-    # --- Step 1: Collect NF assignments per date ---
-    calendar = {}
+
+    start_date = pd.Timestamp(start_date).normalize()
+
+    print(f"display start date: {start_date.year}")
+
+    # --- Step 1: Collect all NF assignments per resident ---
+    calendar = {}  # date -> list of resident names
     for _, row in residents_df.iterrows():
-        for d in helper.expand_dates(row["nf"], base_year=start_date.year):
-            # Ensure d is a pd.Timestamp
-            d_ts = pd.Timestamp(d)
+        nf_range = row.get("nf", "")
+        if not nf_range or str(nf_range).strip().lower() == "no":
+            continue
+        
+        nf_dates = helper.expand_dates(
+            str(nf_range),
+            base_year=start_date.year,
+            anchor_month=start_date.month
+        )
+
+        for d in nf_dates:
+            d_ts = pd.Timestamp(d).normalize()
             calendar.setdefault(d_ts, []).append(row["name"])
-    
-    # --- Step 2: Determine full date range ---
-    start_date = pd.Timestamp(start_date)
-    last_date = max(calendar.keys()) if calendar else start_date
-    last_date = pd.Timestamp(last_date)
-    all_dates = [start_date + pd.Timedelta(days=i) for i in range((last_date - start_date).days + 1)]
-    
+
+
+    if not calendar:
+        return pd.DataFrame(columns=["day", "date"] + nf_cols)
+
+    # --- Step 2: Determine full range of NF dates ---
+    min_date = min(calendar.keys())
+    max_date = max(calendar.keys())
+
+    # Build full range from min_date to max_date (cross-year)
+    all_dates = [min_date + pd.Timedelta(days=i) for i in range((max_date - min_date).days + 1)]
+
     # --- Step 3: Build base NF calendar DataFrame ---
     base_calendar = pd.DataFrame({
+        "date": all_dates,
         "day": [d.strftime("%a") for d in all_dates],
-        "date": all_dates,  # keep as Timestamp
         "nf": [", ".join(calendar.get(d, [])) for d in all_dates]
     })
-    
+
     # --- Step 4: Expand into NF1..NF{n_slots} with rotation ---
     calendar_data = []
     for day_idx, row in base_calendar.iterrows():
@@ -42,8 +62,14 @@ def build_nf_calendar(residents_df, start_date, buffers, nf_cols=None):
         for idx, col_name in enumerate(nf_cols):
             row_dict[col_name] = rotated_names[idx] if idx < len(rotated_names) else ""
         calendar_data.append(row_dict)
-    
-    return pd.DataFrame(calendar_data)
+
+    calendar_df = pd.DataFrame(calendar_data)
+
+    # --- Step 5: Slice calendar to display_start_date onwards for display ---
+    calendar_df = calendar_df[calendar_df["date"] >= start_date].reset_index(drop=True)
+
+    return calendar_df
+
 
 def add_nf_day_preferences_seniors(model, assign, roles, days, nf_residents):
     """

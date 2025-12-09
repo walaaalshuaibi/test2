@@ -3,11 +3,11 @@ import wr
 import helper
 import blackout
 
-def prepare_blackout(buffers, residents_df, start_date, resident_year, r2_cover, on_days, off_days, residents):
+def prepare_blackout(buffers, residents_df, start_date, num_weeks, resident_year, r2_cover, on_days, off_days, residents):
 
     NF_buffer, Vacation_buffer, WR_buffer, NS_buffer = buffers
 
-    nf_blackout, night_counts = blackout.nf_blackout_section(residents_df, start_date, NF_buffer) if NF_buffer is not None else ({}, {})
+    nf_blackout, night_counts = blackout.nf_blackout_section(residents_df, start_date, num_weeks, NF_buffer) if NF_buffer is not None else ({}, {})
     vacation_blackout, vacation_records = blackout.vacation_blackout_section(residents_df, start_date, Vacation_buffer) if Vacation_buffer is not None else ({}, [])
     wr_blackout, weekend_rounds_records = blackout.wr_blackout_section(residents_df, start_date, WR_buffer, resident_year, r2_cover=r2_cover) if WR_buffer is not None else ({}, [])
     on_blackout, off_blackout = blackout.on_off_blackout_section(on_days, off_days) if (on_days is not None or off_days is not None) else ({}, {})
@@ -79,18 +79,47 @@ def build_blackout_lookup(blackout_df):
         blackout_dict.setdefault(resident, set()).add(date)
     return blackout_dict
 
-def nf_blackout_section(residents_df, start_date, NF_buffer):
+def nf_blackout_section(residents_df, start_date, num_weeks, NF_buffer):
+    from datetime import timedelta
+
+    # Calculate the end of the schedule
+    end_date = start_date + timedelta(weeks=num_weeks) - timedelta(days=1)
+
     nf_blackout = {r["name"]: set() for _, r in residents_df.iterrows()}
     night_counts = {r["name"]: 0 for _, r in residents_df.iterrows()}
 
     for _, row in residents_df.iterrows():
         resident_name = row["name"]
+        nf_value = str(row.get("nf", "no")).strip()
 
-        if str(row.get("nf", "no")).strip().lower() != "no":
-            for rng in row["nf"].split("\n"):
-                for d in helper.expand_dates(rng, base_year=start_date.year):
-                    night_counts[resident_name] += 1
-                    update_blackout(resident_name, [d], nf_blackout, buffer_days=NF_buffer)
+        if nf_value.lower() == "no" or nf_value == "":
+            continue
+
+        for rng in nf_value.split("\n"):
+
+            # Expand all NF dates from the input range
+            expanded = helper.expand_dates(
+                rng,
+                base_year=start_date.year,
+                anchor_month=start_date.month
+            )
+
+            # 🔥 Keep only dates inside the scheduling window
+            valid_nf_days = [
+                d for d in expanded
+                if start_date <= d <= end_date
+            ]
+
+            # Count only valid dates
+            night_counts[resident_name] += len(valid_nf_days)
+
+            # Apply blackout only on valid days
+            update_blackout(
+                resident_name,
+                valid_nf_days,
+                nf_blackout,
+                buffer_days=NF_buffer
+            )
 
     return nf_blackout, night_counts
 
@@ -104,7 +133,7 @@ def vacation_blackout_section(residents_df, start_date, Vacation_buffer):
 
         if str(row.get("leave", "no")).strip().lower() != "no":
             for rng in row["leave"].split("\n"):
-                dates = helper.expand_dates(rng, base_year=start_date.year)
+                dates = helper.expand_dates(rng, base_year=start_date.year, anchor_month=start_date.month)
                 if not dates:
                     continue
 

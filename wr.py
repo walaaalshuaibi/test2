@@ -17,7 +17,7 @@ def add_weekend_rounds_constraint(model, assign, roles, weekend_rounds_df, resid
 
         for _, row in preassigned_wr_df.iterrows():
             resident = row["name"].strip()
-            date = row["date"]
+            date = pd.Timestamp(row["date"]).normalize()
             role = str(row["role"]).strip().lower()
 
             # --- Handle blackout removal ---
@@ -49,6 +49,8 @@ def add_weekend_rounds_constraint(model, assign, roles, weekend_rounds_df, resid
                 print(f"⚠️ Skipping preassigned WR for {resident}: role '{role}' not found in roles list.")
                 continue
 
+            print("===============================")
+            print(type(date))
             # Fix the assignment 
             model.Add(assign[(date, role, resident)] == 1)
 
@@ -62,6 +64,7 @@ def add_weekend_rounds_constraint(model, assign, roles, weekend_rounds_df, resid
         for _, row in weekend_rounds_df.iterrows():
             resident = row["name"].strip()
             date = row["date"]
+            
             
             # Enforce that the resident is assigned to 'EW Day' on this date
             if "ew day" in roles:
@@ -102,7 +105,7 @@ def build_weekend_round_assignments(residents_df, start_date, resident_year, r2_
 
         # Handle multi-line weekend ranges
         for rng in wr_field.split(" and "):
-            dates = helper.expand_dates(rng, base_year=start_date.year)
+            dates = helper.expand_dates(rng, base_year=start_date.year, anchor_month=start_date.month)
             if not dates:
                 continue
 
@@ -190,6 +193,3 @@ def add_wr_soft_constraints(model, assign, days, roles, weekend_rounds_df, weeke
                             penalties.append(penalty_var)
 
     return penalties
-
-
-

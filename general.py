@@ -2,9 +2,12 @@ from collections import defaultdict
 import pandas as pd
 import helper
 
-def extract_shift_columns():
+def extract_shift_columns(resident_year):
     # Extract the columns needed
-    nf_roles = ["ER-1 Night", "ER-2 Night", "EW Night"]
+    if resident_year == 'r1':
+        nf_roles = ["ER-1 Night", "EW Night", "ER-2 Night"]
+    else:
+        nf_roles = ["ER-1 Night", "ER-2 Night", "EW Night"]
     day_roles = ["ER-1 Day", "ER-2 Day", "EW Day"]
     return nf_roles, day_roles
 
@@ -142,6 +145,59 @@ def add_cooldown_constraints(model, assign, days, roles, residents, cooldown=3):
                     # Hard constraint: if works_d then not works_next
                     model.AddImplication(works_d, works_next.Not())
 
+def add_no_thursday_after_weekend_constraint(model, assign, days, roles, residents, weekend_days, weekend_rounds_df):
+    """
+    Hard constraint:
+    - If a resident has 2 or more weekend shifts (or weekend rounds),
+      then they cannot be assigned to any role on Thursday.
+    
+    Args:
+        model: CpModel
+        assign: dict[(day, role, resident)] -> BoolVar
+        days: list of pd.Timestamp
+        roles: list of roles
+        residents: list of resident names
+        weekend_days: list of pd.Timestamp that are weekends
+        weekend_rounds_df: pd.DataFrame with columns ["date", "name"] for weekend rounds
+    """
+    thursdays = [d for d in days if d.strftime("%a") == "Thu"]
+
+    # Precompute weekend round counts per resident
+    weekend_rounds_count = {}
+    if weekend_rounds_df is not None and not weekend_rounds_df.empty:
+        weekend_rounds_count = weekend_rounds_df.groupby("name")["date"].nunique().to_dict()
+    
+    for r in residents:
+        # Collect all weekend shift variables for this resident
+        weekend_assign_vars = [
+            assign[(d, role, r)]
+            for d in weekend_days
+            for role in roles
+            if (d, role, r) in assign
+        ]
+        
+        # Count of weekend rounds (fixed preassigned)
+        rounds = weekend_rounds_count.get(r, 0)
+        
+        if not weekend_assign_vars:
+            continue
+        
+        # Sum of weekend shifts as IntVar
+        weekend_shifts_sum = model.NewIntVar(0, len(weekend_assign_vars), f"{r}_weekend_sum")
+        model.Add(weekend_shifts_sum == sum(weekend_assign_vars))
+        
+        # Boolean: exceeds 1 weekend shift or 1 weekend round
+        exceeds_two = model.NewBoolVar(f"{r}_exceeds_two_weekend")
+        model.Add(weekend_shifts_sum + rounds >= 2).OnlyEnforceIf(exceeds_two)
+        model.Add(weekend_shifts_sum + rounds < 2).OnlyEnforceIf(exceeds_two.Not())
+        
+        # For each Thursday, make sure no role is assigned if exceeds_two is True
+        for thursday in thursdays:
+            for role in roles:
+                key = (thursday, role, r)
+                if key in assign:
+                    model.Add(assign[key] == 0).OnlyEnforceIf(exceeds_two)
+
 # ------------------------- 
 # Soft Constraints 
 # -------------------------
@@ -226,40 +282,38 @@ def add_score_balance_soft_penalties(model, score_vars, residents, max_points, t
     return penalties
 
 def tuesday_thursday_fairness_penalty(model, assign, days, roles, residents):
-    """ 
-    Soft fairness constraint: Penalize residents who are assigned to too many Tuesday/Thursday shifts.
-    - 0 or 1 Tue/Thu shifts → no penalty
-    - 2+ Tue/Thu shifts → penalty = (count - 1)
+    """
+    Soft fairness constraint: Penalize residents assigned to Tue/Thu/Fri/Sat too often.
     
-    Returns a list of penalty variables to be included in the objective.
+    Rules:
+    - 0 or 1 hard days → no penalty
+    - 2+ hard days → penalty = count - 1
     """
     
     penalty_vars = []
-    
-    # Identify all Tuesday and Thursday dates in the schedule
-    hard_days = [d for d in days if d.strftime('%a') in ['Tue', 'Thu']]
-    
-    for r in residents:
-        # Count how many Tue/Thu shifts this resident has         
-        hard_day_count = model.NewIntVar(0, len(hard_days), f"{r}_hard_day_count")
-        model.Add(hard_day_count == sum(assign[(d, role, r)] for d in hard_days for role in roles))
-        
-        # Boolean flag: does this resident have 2 or more Tue/Thu shifts?         
-        has_excess_hard_day = model.NewBoolVar(f"{r}_has_excess_hard_day")
-        model.Add(hard_day_count >= 2).OnlyEnforceIf(has_excess_hard_day)
-        model.Add(hard_day_count < 2).OnlyEnforceIf(has_excess_hard_day.Not())
-        
-        # Penalty variable: 
-        # - If resident has 0 or 1 Tue/Thu shifts → penalty = 0 
-        # - If resident has 2+ → penalty = hard_day_count - 1         
-        excess_hard_day = model.NewIntVar(0, len(hard_days), f"{r}_excess_hard_day")
-        model.Add(excess_hard_day == hard_day_count - 1).OnlyEnforceIf(has_excess_hard_day)
-        model.Add(excess_hard_day == 0).OnlyEnforceIf(has_excess_hard_day.Not())
-        
-        # Collect penalty variable for use in the objective
-        penalty_vars.append(excess_hard_day)
-    
+
+    # Filter all Tue/Thu/Fri/Sat dates
+    hard_days = [d for d in days if d.strftime('%a') in ['Tue', 'Thu', 'Fri', 'Sat']]
+
+    for resident in residents:
+        # Count number of hard day assignments for this resident
+        hard_day_count = model.NewIntVar(0, len(hard_days) * len(roles), f"{resident}_hard_day_count")
+        model.Add(hard_day_count == sum(assign[(d, role, resident)] for d in hard_days for role in roles))
+
+        # Boolean flag for exceeding 1 hard day
+        exceeds_one = model.NewBoolVar(f"{resident}_exceeds_one_hard_day")
+        model.Add(hard_day_count >= 2).OnlyEnforceIf(exceeds_one)
+        model.Add(hard_day_count < 2).OnlyEnforceIf(exceeds_one.Not())
+
+        # Penalty variable: count - 1 if >1, else 0
+        penalty = model.NewIntVar(0, len(hard_days) * len(roles), f"{resident}_hard_day_penalty")
+        model.Add(penalty == hard_day_count - 1).OnlyEnforceIf(exceeds_one)
+        model.Add(penalty == 0).OnlyEnforceIf(exceeds_one.Not())
+
+        penalty_vars.append(penalty)
+
     return penalty_vars
+
 
 def balanced_rotation_penalty(model, assign, days, roles, residents):
     """
@@ -313,8 +367,8 @@ def add_role_preferences_by_level(model, assign, roles, days, residents, residen
 
     # Preferred weekend roles
     preferred = {
-        "R4": ["er-2 day"],
-        "R3": ["er-1 day","ew day"]
+        "r4": ["er-2 day"],
+        "r3": ["er-1 day","ew day"]
     }
 
     for r in residents:
@@ -348,203 +402,136 @@ def add_role_preferences_by_level(model, assign, roles, days, residents, residen
 
     return penalties
 
-
 def add_minimum_spacing_soft_constraint(
-    model, assign, days, roles, residents, max_shifts,
-    ns_df=None, wr_df=None, nf_calendar_df=None, extra_preassigned=None
+    model, assign, days, roles, residents, fixed_preassigned, min_gap=7
 ):
-    """
-    Soft spacing constraint considering all assignments (solver + preassigned).
-    Penalizes residents for being assigned too close together.
-
-    Returns:
-        penalties: list of IntVars representing spacing penalties
-    """
-
     penalties = []
-
     sorted_days = sorted(days)
 
     for r in residents:
-        # Compute min_gap per resident
-        min_gap_r = max(1, 30 // max_shifts[r])
+        # 1) Fixed preassigned dates for this resident
+        fixed_dates = sorted(fixed_preassigned.get(r, []))
 
-        # Get all assigned dates (preassigned + solver)
-        all_assigned = helper.get_all_assigned_dates(
-            r=r,
-            solver=model,
-            assign=assign,
-            days=days,
-            roles=roles,
-            ns_df=ns_df,
-            wr_df=wr_df,
-            nf_calendar_df=nf_calendar_df,
-            extra_preassigned=extra_preassigned
-        )
+        # -----------------------------------------------------------
+        # A) Spacing between one solver date and one fixed date
+        # -----------------------------------------------------------
+        for d in sorted_days:
+            for fd in fixed_dates:
+                gap = abs((d - fd).days)
+                if gap < min_gap:
+                    # All roles that could assign this resident on day d
+                    assign_vars = [
+                        assign[(d, role, r)]
+                        for role in roles
+                        if (d, role, r) in assign
+                    ]
+                    if not assign_vars:
+                        continue
 
-        all_assigned = sorted(all_assigned)
+                    # If ANY role assigns them on this day → violation
+                    assigned_today = model.NewBoolVar(f"{r}_{d}_close_to_fixed")
+                    model.AddBoolOr(assign_vars).OnlyEnforceIf(assigned_today)
+                    model.Add(sum(assign_vars) == 0).OnlyEnforceIf(assigned_today.Not())
 
-        # ----------------------
-        # 1) Pairwise proportional penalties
-        # ----------------------
-        for i in range(len(all_assigned)):
-            for j in range(i + 1, len(all_assigned)):
-                d1, d2 = all_assigned[i], all_assigned[j]
+                    penalties.append(assigned_today)
+
+        # -----------------------------------------------------------
+        # B) Spacing between solver-assigned days
+        # -----------------------------------------------------------
+        for i in range(len(sorted_days)):
+            for j in range(i+1, len(sorted_days)):
+                d1 = sorted_days[i]
+                d2 = sorted_days[j]
+
                 gap = (d2 - d1).days
+                if gap < min_gap:
+                    # Collect vars for each day
+                    vars_d1 = [
+                        assign[(d1, role, r)]
+                        for role in roles
+                        if (d1, role, r) in assign
+                    ]
+                    vars_d2 = [
+                        assign[(d2, role, r)]
+                        for role in roles
+                        if (d2, role, r) in assign
+                    ]
 
-                if gap < min_gap_r:
-                    # Determine if either day is preassigned
-                    preassigned_days = set()
-                    if ns_df is not None:
-                        preassigned_days.update(pd.to_datetime(ns_df.loc[ns_df["name"] == r, "date"]).dt.date)
-                    if wr_df is not None:
-                        preassigned_days.update(pd.to_datetime(wr_df.loc[wr_df["name"] == r, "date"]).dt.date)
-                    if nf_calendar_df is not None:
-                        preassigned_days.update(pd.to_datetime(nf_calendar_df.loc[nf_calendar_df["name"] == r, "date"]).dt.date)
-                    if extra_preassigned:
-                        if isinstance(extra_preassigned, dict):
-                            preassigned_days.update([pd.to_datetime(d).date() for d in extra_preassigned.get(r, [])])
-                        elif isinstance(extra_preassigned, list):
-                            for item in extra_preassigned:
-                                if isinstance(item, tuple) and item[0] == r:
-                                    preassigned_days.add(pd.to_datetime(item[1]).date())
+                    if not vars_d1 or not vars_d2:
+                        continue
 
-                    if d1 in preassigned_days and d2 in preassigned_days:
-                        continue  # skip both preassigned
-                    elif d1 in preassigned_days or d2 in preassigned_days:
-                        # penalize only solver-controlled day
-                        solver_day = d1 if d2 in preassigned_days else d2
-                        for role in roles:
-                            penalties.append(assign[(solver_day, role, r)])
-                    else:
-                        # Both solver-controlled → proportional penalty
-                        penalty_var = model.NewIntVar(1, min_gap_r - 1, f"penalty_{r}_{d1}_{d2}")
-                        model.Add(penalty_var == min_gap_r - gap)
-                        penalties.append(penalty_var)
+                    any_d1 = model.NewBoolVar(f"{r}_{d1}_any")
+                    any_d2 = model.NewBoolVar(f"{r}_{d2}_any")
 
-        # ----------------------
-        # 2) Sliding window max-1 enforcement
-        # ----------------------
-        for i in range(len(sorted_days) - min_gap_r + 1):
-            window_days = sorted_days[i:i + min_gap_r]
-            window_vars = [assign[(d, role, r)] for d in window_days for role in roles]
-            if not window_vars:
-                continue
-            window_count = model.NewIntVar(0, len(window_vars), f"window_count_{r}_{i}")
-            model.Add(window_count == sum(window_vars))
-            overassign = model.NewIntVar(0, len(window_vars), f"overassign_{r}_{i}")
-            model.AddMaxEquality(overassign, [window_count - 1, 0])
-            penalties.append(overassign)
+                    model.AddBoolOr(vars_d1).OnlyEnforceIf(any_d1)
+                    model.Add(sum(vars_d1) == 0).OnlyEnforceIf(any_d1.Not())
 
-    return penalties
+                    model.AddBoolOr(vars_d2).OnlyEnforceIf(any_d2)
+                    model.Add(sum(vars_d2) == 0).OnlyEnforceIf(any_d2.Not())
 
-def add_fairness_soft_constraint(
-    model, assign, days, roles, residents, max_shifts,
-    ns_df=None, wr_df=None, nf_calendar_df=None, extra_preassigned=None
-):
-    """
-    Fairness soft constraint:
-    - Compare residents with same max_shifts.
-    - Penalize differences in total assignments (solver + preassigned).
-    """
+                    violation = model.NewBoolVar(f"gap_violation_{r}_{d1}_{d2}")
+                    model.AddBoolAnd([any_d1, any_d2]).OnlyEnforceIf(violation)
+                    model.AddBoolOr([any_d1.Not(), any_d2.Not()]).OnlyEnforceIf(violation.Not())
 
-    penalties = []
-
-    # Group residents by max_shifts
-    groups = defaultdict(list)
-    for r in residents:
-        groups[max_shifts[r]].append(r)
-
-    # Compute total assignments per resident as IntVar + preassigned count
-    total_assignments = {}
-    for r in residents:
-        # Solver-controlled assignments
-        solver_assign_var = model.NewIntVar(0, len(days)*len(roles), f"total_solver_{r}")
-        model.Add(solver_assign_var == sum(assign[(d, role, r)] for d in days for role in roles))
-
-        # Preassigned count
-        preassigned_count = len(helper.get_all_assigned_dates(
-            r=r, solver=None, assign=assign, days=[], roles=[],
-            ns_df=ns_df, wr_df=wr_df, nf_calendar_df=nf_calendar_df,
-            extra_preassigned=extra_preassigned
-        ))
-
-        # Total = solver + preassigned (constant added)
-        total_assignments[r] = solver_assign_var + preassigned_count
-
-    # Add fairness penalties within each group
-    for k, group in groups.items():
-        if len(group) <= 1:
-            continue
-
-        for i in range(len(group)):
-            for j in range(i+1, len(group)):
-                r1, r2 = group[i], group[j]
-                diff_var = model.NewIntVar(0, len(days)*len(roles), f"fair_diff_{r1}_{r2}")
-                model.AddAbsEquality(diff_var, total_assignments[r1] - total_assignments[r2])
-                penalties.append(diff_var)
+                    penalties.append(violation)
 
     return penalties
 
 
 def weekend_vs_tue_thu_penalty(model, assign, days, roles, residents, weekend_days, threshold=2):
     """
-    Soft constraint: if a resident has >= `threshold` weekend shifts,
-    then each Tue/Thu assignment for that resident produces a penalty.
+    Soft constraint: for weekend + Tue/Thu assignments, penalize consecutive assignments.
+    If a resident has an assignment on one of these days, the next assignment on any of these
+    days produces a penalty, to encourage fairness.
 
     Args:
         model: cp_model.CpModel
         assign: dict[(day, role, resident)] -> BoolVar
-        days: iterable of pd.Timestamp (all days in schedule)
-        roles: list of role names (strings)
-        residents: list of resident names (strings)
-        weekend_days: iterable (set/list) of pd.Timestamp that are considered weekend
-        threshold: int, weekend-shift count threshold (default 2)
+        days: list of pd.Timestamp (all schedule days, sorted)
+        roles: list of role names
+        residents: list of resident names
+        weekend_days: list/set of pd.Timestamp considered weekend
+        threshold_days: list of weekday strings to consider in addition to weekend (default Tue/Thu)
 
     Returns:
-        penalties: list of IntVar (0..1) — include these in the objective.
+        penalty_vars: list of IntVar (0..1) — include in objective
     """
+    threshold_days=["Tue","Thu"]
     penalty_vars = []
-    # Precompute Tue/Thu days
-    tue_thu_days = [d for d in days if d.strftime("%a") in ["Tue", "Thu"]]
+
+    # Combine all “critical days”
+    critical_days = [d for d in days if d in weekend_days or d.strftime("%a") in threshold_days]
+    critical_days = sorted(critical_days)  # make sure days are chronological
 
     for r in residents:
-        # --- weekend count var ---
-        weekend_count = model.NewIntVar(0, len(weekend_days), f"weekend_count_{r}")
-        weekend_sum_terms = []
-        for d in weekend_days:
-            for role in roles:
-                key = (d, role, r)
-                if key in assign:
-                    weekend_sum_terms.append(assign[key])
-        if weekend_sum_terms:
-            model.Add(weekend_count == sum(weekend_sum_terms))
-        else:
-            model.Add(weekend_count == 0)
+        # Keep track of the previous critical assignment
+        prev_assigned = None
 
-        # Boolean: resident has many weekends (>= threshold)
-        has_many_weekends = model.NewBoolVar(f"has_many_weekends_{r}")
-        model.Add(weekend_count >= threshold).OnlyEnforceIf(has_many_weekends)
-        model.Add(weekend_count < threshold).OnlyEnforceIf(has_many_weekends.Not())
-
-        # --- For each Tue/Thu assignment, create a violation var = assign AND has_many_weekends ---
-        for d in tue_thu_days:
+        for d in critical_days:
             for role in roles:
                 key = (d, role, r)
                 if key not in assign:
                     continue
-                assigned_var = assign[key]  # BoolVar
+                assigned_var = assign[key]
 
-                # violation bool = assigned_var AND has_many_weekends
-                violation = model.NewBoolVar(f"violation_{r}_{d.date()}_{role}")
-                model.AddBoolAnd([assigned_var, has_many_weekends]).OnlyEnforceIf(violation)
-                model.AddBoolOr([assigned_var.Not(), has_many_weekends.Not()]).OnlyEnforceIf(violation.Not())
+                if prev_assigned is None:
+                    # First critical day → no penalty
+                    prev_assigned = assigned_var
+                    continue
 
-                # Penalty variable (0..1), equal to violation
+                # Penalty if assigned_var AND previous was assigned
+                violation = model.NewBoolVar(f"consec_pen_{r}_{d.date()}_{role}")
+                model.AddBoolAnd([assigned_var, prev_assigned]).OnlyEnforceIf(violation)
+                model.AddBoolOr([assigned_var.Not(), prev_assigned.Not()]).OnlyEnforceIf(violation.Not())
+
+                # IntVar for penalty
                 penalty = model.NewIntVar(0, 1, f"pen_{r}_{d.date()}_{role}")
                 model.Add(penalty == violation)
 
                 penalty_vars.append(penalty)
+
+                # Update previous assigned for next iteration
+                prev_assigned = assigned_var
 
     return penalty_vars
 

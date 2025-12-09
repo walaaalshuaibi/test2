@@ -19,9 +19,6 @@ def fill_ns_cells(
     """ 
     Fill empty NF cells in the calendar with unused residents, ensuring they are not on vacation or blackout on that date.
     """
-    import pandas as pd
-    import random
-    import blackout
 
     if nf_cols is None:
         nf_cols = ["NF1", "NF2", "NF3"]
@@ -71,11 +68,12 @@ def fill_ns_cells(
                     continue
 
                 if resident_year == "r1":
-                    assigned = assign_ns_juniors(
-                        date, available_residents, blackout_lookup, nf_residents=nf_residents, nf_max_limit=nf_max_limit, 
-                        nf_assigned=nf_assigned, nf_blackout_lookup=nf_blackout_lookup, wr_residents=wr_residents)
+                    print("started r1 ns.....")
+                    assigned = assign_ns_juniors(date, candidates, blackout_lookup, nf_assigned, nf_blackout_lookup, nf_calendar_df)                                
+                    
                 elif resident_year == "seniors":
                     assigned = assign_ns_seniors(date, candidates, blackout_lookup, resident_level, col)
+
                 else:
                     assigned = None
 
@@ -86,6 +84,9 @@ def fill_ns_cells(
                     blackout.update_blackout(resident, [date], blackout_lookup)
                     if resident in available_residents:
                         available_residents.remove(resident)
+
+                    assigned_blackouts = blackout_lookup.get(assigned, set())
+                    print(f"{assigned} blackout dates:", sorted(assigned_blackouts))
 
     ns_residents = pd.DataFrame(ns_records)
     return nf_calendar_df, ns_residents, blackout_lookup
@@ -129,65 +130,79 @@ def assign_ns_seniors(date, available_residents, blackout_lookup, resident_level
 
     return chosen
 
-def assign_ns_juniors(date, available_residents, blackout_lookup, nf_residents=None, 
-                      nf_max_limit=None, nf_assigned=None, nf_blackout_lookup=None, wr_residents=None):
-    """Assign one resident to NS, respecting NF blackout + previous/next NS days."""
 
-    if nf_assigned is None:
-        nf_assigned = set()
+def assign_ns_juniors(date, candidates, blackout_lookup, nf_assigned, nf_blackout_lookup, nf_calendar_df):
+    """
+    Assign NS (Thursday night) for juniors based on NF blocks:
+    - First half of NF residents (by NF start date) → NS = last NF date + 15
+    - Second half → NS = first NF date - 8
+    - Skips residents already assigned, blackout conflicts, and respects nf_blackout_lookup
+    """
+    import pandas as pd
 
-    print("WR RESIDENTS")
-    for r in nf_residents:
-        print(r)
+    date = pd.Timestamp(date)
 
-    # Extend available_residents with NF residents if allowed
-    if nf_residents and nf_max_limit and nf_max_limit[0] > 0:
-        for r in nf_residents:
-            if r not in available_residents and r not in wr_residents:
-                available_residents.append(r)
+    # Collect all NF columns
+    nf_cols_all = [c for c in nf_calendar_df.columns if "night" in c.lower()]
 
-    # --- Filter candidates ---
-    candidates = []
-    for r in available_residents:
-        blocked = (r, date) in blackout_lookup
-        nf_blocked = nf_blackout_lookup.get((r, date), False) if nf_blackout_lookup else False
+    # Build NF blocks per resident: {name: (nf_start, nf_end)}
+    resident_blocks = {}
+    for c in nf_cols_all:
+        for _, row in nf_calendar_df.iterrows():
+            name = row[c]
+            if isinstance(name, str) and name.strip():
+                name = name.strip()
+                resident_blocks.setdefault(name, []).append(pd.Timestamp(row["date"]))
 
-        # Optional: check previous and next dates
-        prev_day = date - pd.Timedelta(days=1)
-        next_day = date + pd.Timedelta(days=1)
-        adjacent_blocked = ((r, prev_day) in blackout_lookup or
-                            (r, next_day) in blackout_lookup or
-                            (r, prev_day) in nf_blackout_lookup or
-                            (r, next_day) in nf_blackout_lookup)
+    # Convert lists to (start, end) blocks
+    resident_blocks = {name: (min(dates), max(dates)) for name, dates in resident_blocks.items()}
 
-        if not blocked and not nf_blocked and not adjacent_blocked:
-            candidates.append(r)
+    # Sort residents by NF start date
+    sorted_residents = sorted(resident_blocks.items(), key=lambda x: x[1][0])
+    total_residents = len(sorted_residents)
+    half_index = total_residents // 2
 
-    if not candidates:
-        return None
+    for i, (name, (nf_start, nf_end)) in enumerate(sorted_residents):
+        already_assigned = name in nf_assigned
+        first_half = i < half_index
 
-    # --- Weighted random choice ---
-    weights = []
-    for r in candidates:
-        base_weight = 3
-        if nf_residents and r in nf_residents and r not in nf_assigned:
-            base_weight *= 5
-        weights.append(base_weight)
+        if already_assigned:
+            print(f"Resident: '{name}' already assigned, skipping")
+            continue
 
-    chosen = random.choices(candidates, weights=weights, k=1)[0]
+        # Determine candidate NS date
+        if first_half:
+            ns_candidate = nf_end + pd.Timedelta(days=15)
+            half_label = "first-half"
+        else:
+            ns_candidate = nf_start - pd.Timedelta(days=8)
+            half_label = "second-half"
 
-    # --- Bookkeeping ---
-    available_residents.remove(chosen)
-    if nf_residents and chosen in nf_residents:
-        nf_assigned.add(chosen)
+        matches_target = ns_candidate.date() == date.date()
+        blackout_conflict = date in blackout_lookup.get(name, set())
+        nf_block_conflict = nf_blackout_lookup and (date in nf_blackout_lookup.get(name, set()))
 
-    # --- Update NS blackout to prevent adjacent assignments ---
-    if nf_blackout_lookup is not None:
-        prev_day = date - pd.Timedelta(days=1)
-        next_day = date + pd.Timedelta(days=1)
-        nf_blackout_lookup[(chosen, prev_day)] = True
-        nf_blackout_lookup[(chosen, next_day)] = True
+        print(f"Resident: '{name}' | NF days: {(nf_end - nf_start).days + 1} | "
+              f"already_assigned: {already_assigned}")
+        print(f"  NF start={nf_start.date()}, NF end={nf_end.date()} | "
+              f"Half: {half_label} -> ns_candidate={ns_candidate.date()} | "
+              f"matches_target={matches_target} | blackout={blackout_conflict} | "
+              f"nf_block_blackout={nf_block_conflict}")
 
-    return chosen
+        # Assign if matches and no conflicts
+        if matches_target and not blackout_conflict and not nf_block_conflict:
+            nf_assigned.add(name)
+            print(f"  ✅ Assigned NS to '{name}' on {date.date()}")
+            return name
 
-
+    # ---------- ADD FALLBACK HERE ----------
+    # If no NF resident was assigned, pick from candidates
+    # 'candidates' should be a list of available residents (non-NF, not WR, not blacked out)
+    for cand in candidates:
+        if date not in blackout_lookup.get(cand, set()):
+            nf_assigned.add(cand)
+            print(f"  ⚠️ Fallback: assigning '{cand}' to {date.date()}")
+            return cand
+            
+    print(f"  ⚠️ No NS assignment found for {date.date()}")
+    return None
