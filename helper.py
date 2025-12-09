@@ -219,15 +219,13 @@ def build_fixed_preassigned(nf_calendar_df,
                             weekend_rounds_df,
                             preassigned_ns_df=None,
                             preassigned_wr_df=None):
-    """
-    Build a dictionary of ALL preassigned shifts for spacing penalties.
-    Output:
-        { resident_name : set([date1, date2, ...]) }
-    """
 
     fixed = {}
 
-    # ---- 1. NF Calendar (NF residents have fixed days) ----
+    def ts(x):
+        return pd.to_datetime(x)
+
+    # ---- 1. NF Calendar ----
     for _, row in nf_calendar_df.iterrows():
         for role_col in nf_calendar_df.columns:
             if role_col.lower() in ["date", "day", "weekday"]:
@@ -235,33 +233,29 @@ def build_fixed_preassigned(nf_calendar_df,
             r = row[role_col]
             if pd.isna(r):
                 continue
-            fixed.setdefault(r.strip(), set()).add(row["date"])
+            fixed.setdefault(r.strip(), set()).add(ts(row["date"]))
 
-    # ---- 2. NS (night shifts that are pre-filled) ----
+    # ---- 2. NS ----
     for _, row in ns_residents.iterrows():
         r = row["name"].strip()
-        d = row["date"]
-        fixed.setdefault(r, set()).add(d)
+        fixed.setdefault(r, set()).add(ts(row["date"]))
 
-    # ---- 3. WR Weekend Rounders ----
+    # ---- 3. WR ----
     for _, row in weekend_rounds_df.iterrows():
         r = row["name"].strip()
-        d = row["date"]
-        fixed.setdefault(r, set()).add(d)
+        fixed.setdefault(r, set()).add(ts(row["date"]))
 
-    # ---- 4. Excel Preassigned NS ----
+    # ---- 4. Excel NS ----
     if preassigned_ns_df is not None:
         for _, row in preassigned_ns_df.iterrows():
             r = row["name"].strip()
-            d = row["date"]
-            fixed.setdefault(r, set()).add(d)
+            fixed.setdefault(r, set()).add(ts(row["date"]))
 
-    # ---- 5. Excel Preassigned WR ----
+    # ---- 5. Excel WR ----
     if preassigned_wr_df is not None:
         for _, row in preassigned_wr_df.iterrows():
             r = row["name"].strip()
-            d = row["date"]
-            fixed.setdefault(r, set()).add(d)
+            fixed.setdefault(r, set()).add(ts(row["date"]))
 
     return fixed
 
