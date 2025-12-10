@@ -264,9 +264,8 @@ def schedule_with_ortools_full_modular(
 
     status = solver.Solve(model)
 
-    if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        obj = solver.ObjectiveValue()
-        print(f"  Objective = {obj}")
+    if status not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+        raise RuntimeError("No feasible solution found")
     
     # -----------------------------------------------------
     # 8. Extract results
