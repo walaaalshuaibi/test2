@@ -141,7 +141,7 @@ def schedule_with_ortools_full_modular(
     general.add_cooldown_constraints(model, assign, days, day_roles, residents, cooldown=max_consecutive_days)
 
     # No 2 weekends 
-    general.no_two_consecutive_weekends(model, assign, days, day_roles, residents)
+    general.no_consecutive_weekends_constraint(model, assign, days, day_roles, residents)
 
      # 2 Weekends or 2 WR => No Thursday
     general.add_no_thursday_after_weekend_constraint(model, assign, days, day_roles, residents, weekend_days, weekend_rounds_df)
