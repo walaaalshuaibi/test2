@@ -83,38 +83,35 @@ def no_consecutive_weekends_constraint(model, assign, days, roles, residents):
     weekend_by_week = {}
     for d in days:
         if d.strftime('%a') in ['Fri', 'Sat']:
-            week = d.isocalendar()[1]
+            week = d.isocalendar()[1]  # ISO week number
             weekend_by_week.setdefault(week, []).append(d)
 
     sorted_weeks = sorted(weekend_by_week.keys())
 
     for r in residents:
-        # Build weekend count per week
-        weekend_counts = {}
+        # Build a flag for each weekend: did resident work any shift in that weekend?
+        weekend_flags = {}
         for w in sorted_weeks:
             wknd_vars = [assign[(d, role, r)]
                          for d in weekend_by_week[w]
                          for role in roles
                          if (d, role, r) in assign]
+
             if wknd_vars:
-                count = model.NewIntVar(0, len(wknd_vars), f"{r}_wknd_{w}_count")
-                model.Add(count == sum(wknd_vars))
-                weekend_counts[w] = count
+                flag = model.NewBoolVar(f"wknd_{w}_worked_{r}")
+                model.AddMaxEquality(flag, wknd_vars)
+                weekend_flags[w] = flag
             else:
-                weekend_counts[w] = model.NewIntVar(0, 0, f"{r}_wknd_{w}_count")
-                model.Add(weekend_counts[w] == 0)
+                # No possible assignments → force flag = 0
+                flag = model.NewBoolVar(f"wknd_{w}_worked_{r}")
+                model.Add(flag == 0)
+                weekend_flags[w] = flag
 
         # Enforce: no consecutive weekends
         for i in range(len(sorted_weeks) - 1):
             w1, w2 = sorted_weeks[i], sorted_weeks[i + 1]
-            # If they work any shift in w1 and any shift in w2 → conflict
-            both = model.NewBoolVar(f"{r}_wknd_{w1}_{w2}_both")
-            model.Add(weekend_counts[w1] >= 1).OnlyEnforceIf(both)
-            model.Add(weekend_counts[w2] >= 1).OnlyEnforceIf(both)
-            model.Add(weekend_counts[w1] == 0).OnlyEnforceIf(both.Not())
-            model.Add(weekend_counts[w2] == 0).OnlyEnforceIf(both.Not())
-            # forbid both = 1
-            model.Add(both == 0)
+            # If worked_w1 = 1, then worked_w2 must be 0
+            model.Add(weekend_flags[w1] + weekend_flags[w2] <= 1)
                     
 def add_cooldown_constraints(model, assign, days, roles, residents, cooldown=3):
     """
