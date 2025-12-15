@@ -73,7 +73,7 @@ def add_shift_cap_constraints(
         model.Add(score_vars[r] <= max_points[r])
         model.Add(weekend_shifts <= weekend_limits[r])
 
-def no_two_consecutive_weekends(model, assign, days, roles, residents):
+def no_consecutive_weekends_constraint(model, assign, days, roles, residents):
     """
     Hard constraint:
     - If a resident works a Friday, they cannot work the following Fri or Sat
