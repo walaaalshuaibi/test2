@@ -24,34 +24,42 @@ def build_objective(
     ns_spacing_weight=1,
 
     # Hard days
-    hard_day_penalties=None,
-    hard_day_weight=1,
-    weekend_vs_tues_thurs_penalties=None,
-    weekend_vs_tues_thurs_weight=1,
+    hard_nonhard_penalties=None,
+    hard_nonhard_weight=1,
+    hard_diversity_penalties=None,
+    hard_diversity_weight=1,
+    hard_max_penalties=None,
+    hard_max_weight=1,
 
     # Roles
-    diverse_penalties=None,
-    diverse_weight=1,
+    diverse_role_penalties=None,
+    diverse_role_weight=1,
+    diverse_days_penalties=None,
+    diverse_days_weight=1,
     role_pref_penalties=None,
     role_pref_weight=1,
     nf_day_pref_penalties=None,
     nf_day_pref_weight=1,
     wr_penalties=None,
-    wr_pref_weight=1
+    wr_pref_weight=1,
+
+    night_thursday_penalties=None,
+    night_thursday_weight=1
 ):
     """
     Build the optimization objective from penalty components.
     Objective minimizes weighted penalties.
     """
-
     terms = []
 
+    # --- Balance penalties ---
     if non_nf_balance_penalties:
         terms.extend([non_nf_balance_weight * p for p in non_nf_balance_penalties])
 
     if nf_balance_penalties:
         terms.extend([nf_balance_weight * p for p in nf_balance_penalties])
 
+    # --- Spacing penalties ---
     if spacing_nonnf_soft_penalties:
         terms.extend([non_nf_spacing_weight * p for p in spacing_nonnf_soft_penalties])
 
@@ -61,14 +69,22 @@ def build_objective(
     if spacing_ns_soft_penalties:
         terms.extend([ns_spacing_weight * p for p in spacing_ns_soft_penalties])
 
-    if hard_day_penalties:
-        terms.extend([hard_day_weight * p for p in hard_day_penalties])
+    # --- Hard day penalties ---
+    if hard_nonhard_penalties:
+        terms.extend([hard_nonhard_weight * p for p in hard_nonhard_penalties])
 
-    if weekend_vs_tues_thurs_penalties:
-        terms.extend([weekend_vs_tues_thurs_weight * p for p in weekend_vs_tues_thurs_penalties])
+    if hard_diversity_penalties:
+        terms.extend([hard_diversity_weight * p for p in hard_diversity_penalties])
 
-    if diverse_penalties:
-        terms.extend([diverse_weight * p for p in diverse_penalties])
+    if hard_max_penalties:
+        terms.extend([hard_max_weight * p for p in hard_max_penalties])
+
+    # --- Role penalties ---
+    if diverse_role_penalties:
+        terms.extend([diverse_role_weight * p for p in diverse_role_penalties])
+    
+    if diverse_days_penalties:
+        terms.extend([diverse_days_weight * p for p in diverse_days_penalties])
 
     if role_pref_penalties:
         terms.extend([role_pref_weight * p for p in role_pref_penalties])
@@ -78,6 +94,9 @@ def build_objective(
 
     if wr_penalties:
         terms.extend([wr_pref_weight * p for p in wr_penalties])
+
+    if night_thursday_penalties:
+        terms.extend([night_thursday_weight * p for p in wr_penalties])
 
     model.Minimize(sum(terms))
 
@@ -240,6 +259,24 @@ def extract_schedule(
     scores_rows = []
     for r in residents:
         spacing = per_resident_spacing.get(r, {})
+
+        # Get all assigned dates for this resident
+        assigned_dates = helper.get_all_assigned_dates(
+            r=r,
+            solver=solver,
+            assign=assign,
+            days=days,
+            roles=roles,
+            ns_df=ns_residents,
+            wr_df=weekend_rounds_df,
+            nf_calendar_df=nf_calendar_df,
+            extra_preassigned=None
+        )
+
+        # Convert to weekday names and remove duplicates
+        assigned_weekdays = sorted({d.strftime("%a") for d in assigned_dates}, 
+                                key=lambda x: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].index(x))
+
         effective_max_shifts = (limited_shift_residents[r] if limited_shift_residents and r in limited_shift_residents 
                                 else (max_shifts.get(r) if isinstance(max_shifts, dict) else max_shifts))
         row = {
@@ -250,20 +287,21 @@ def extract_schedule(
             "Max Points": max_points.get(r) if isinstance(max_points, dict) else max_points,
             "WR Count": wr_counts.get(r, 0),
             "NF Resident": "Yes" if night_counts.get(r, 0) > 2 else "No",
-            "NS Resident": "Yes" if r in ns_names else "No"
-            # ,"spacing_avg": spacing.get("avg_gap"),
-            # "spacing_min": spacing.get("min_gap"),
-            # "spacing_max": spacing.get("max_gap"),
-            # "spacing_gaps_count": spacing.get("num_gaps", 0),
-            # "spacing_overall_avg": spacing_overall["avg_gap"],
-            # "spacing_overall_min": spacing_overall["min_gap"],
-            # "spacing_overall_max": spacing_overall["max_gap"],
-            # "spacing_overall_gaps_count": spacing_overall["num_gaps"],
-            # "weekend_shifts": weekend_counts_per_res.get(r, 0),
-            # "thursday_shifts": thursday_counts_per_res.get(r, 0),
-            # "tuesday_shifts": tuesday_counts_per_res.get(r, 0),
-            # "Year": resident_levels.get(r),
-            # "WEEKEND ROLE": ", ".join(sorted(weekend_roles_per_res.get(r, [])))
+            "NS Resident": "Yes" if r in ns_names else "No",
+            "Assigned Days": ", ".join(assigned_weekdays),  # <-- NEW: weekdays
+            "spacing_avg": spacing.get("avg_gap"),
+            "spacing_min": spacing.get("min_gap"),
+            "spacing_max": spacing.get("max_gap"),
+            "spacing_gaps_count": spacing.get("num_gaps", 0),
+            "spacing_overall_avg": spacing_overall["avg_gap"],
+            "spacing_overall_min": spacing_overall["min_gap"],
+            "spacing_overall_max": spacing_overall["max_gap"],
+            "spacing_overall_gaps_count": spacing_overall["num_gaps"],
+            "weekend_shifts": weekend_counts_per_res.get(r, 0),
+            "thursday_shifts": thursday_counts_per_res.get(r, 0),
+            "tuesday_shifts": tuesday_counts_per_res.get(r, 0),
+            "Year": resident_levels.get(r),
+            "WEEKEND ROLE": ", ".join(sorted(weekend_roles_per_res.get(r, [])))
         }
         for role in roles:
             row[f"role_{role}_count"] = role_counts.get(r, {}).get(role, 0)

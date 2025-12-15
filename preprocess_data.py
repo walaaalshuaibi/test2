@@ -10,9 +10,14 @@ def prepare_data(residents_df, start_date, num_weeks, resident_year, nf_max_limi
     Prepare scheduling inputs from the residents DataFrame.
     """
 
+    # Clean column names
     residents_df.columns = residents_df.columns.str.strip().str.lower()
-    residents = residents_df['name'].tolist()
 
+    # Strip trailing/leading spaces from the 'name' values
+    residents_df['name'] = residents_df['name'].str.strip()
+
+    # Convert to list
+    residents = residents_df['name'].tolist()
 
     # CALCULATE MAX WEEKENDS
     shifts_limit, points_limit = resident_max_limit[:2]

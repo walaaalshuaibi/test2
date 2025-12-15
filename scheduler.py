@@ -51,7 +51,7 @@ def schedule_with_ortools_full_modular(
         resident_max_limit)
     
     # Build NF calendar
-    nf_calendar_df = nf.build_nf_calendar(residents_df, start_date, buffers, nf_cols=nf_roles)
+    nf_calendar_df = nf.build_nf_calendar(residents_df, start_date, nf_cols=nf_roles)
 
     # Blackout Dictionary
     (non_nf_residents, nf_residents, wr_residents, nf_blackout_lookup, combined_blackout_df, combined_blackout_dict,
@@ -68,7 +68,6 @@ def schedule_with_ortools_full_modular(
         night_counts
     )
 
-
     # NS SCHEDULE
     filled_nf_calendar_df, ns_residents, updated_blackout = ns.fill_ns_cells(
         resident_year,
@@ -84,7 +83,8 @@ def schedule_with_ortools_full_modular(
         preassigned_ns_df=preassigned_ns_df
     )
 
-
+    # print("😟 Blackout:")
+    # print(combined_blackout_df[combined_blackout_df['name'] == 'Naif Almansour'])
 
     # Add NS Blackout to Combined Blackout Dict
     blackout.ns_blackout_section(residents, ns_residents, optional_rules, nf_calendar_df, buffers, combined_blackout_dict)
@@ -134,8 +134,8 @@ def schedule_with_ortools_full_modular(
     general.add_blackout_constraints(model, assign, day_roles, combined_blackout_dict)
     
     # Caps: total shifts, points, weekend limits
-    general.add_shift_cap_constraints(model, assign, days, day_roles, residents, 
-    max_shifts, max_points, weekend_days, weekend_limits, score_vars)
+    # general.add_shift_cap_constraints(model, assign, days, day_roles, residents, 
+    # max_shifts, max_points, weekend_days, weekend_limits, score_vars)
 
     # 3 Day cooldown after every shift
     general.add_cooldown_constraints(model, assign, days, day_roles, residents, cooldown=max_consecutive_days)
@@ -205,51 +205,90 @@ def schedule_with_ortools_full_modular(
     # Maximize spacing constraint  
     fixed_preassigned = helper.build_fixed_preassigned(nf_calendar_df, ns_residents, weekend_rounds_df, preassigned_ns_df, preassigned_wr_df)   
 
-    spacing_nf_soft_penalties = general.add_minimum_spacing_soft_constraint(model, assign, days, day_roles, nf_residents, fixed_preassigned, min_gap=14)
+    spacing_nf_soft_penalties = general.add_minimum_spacing_soft_constraint(model, assign, days, day_roles, nf_residents, fixed_preassigned, min_gap=10)
     spacing_ns_soft_penalties = general.add_minimum_spacing_soft_constraint(model, assign, days, day_roles, ns_residents, fixed_preassigned, min_gap=14)
     non_nf_for_spacing = [r for r in non_nf_residents if r not in ns_residents]
-    spacing_nonnf_soft_penalties = general.add_minimum_spacing_soft_constraint(model, assign, days, day_roles, non_nf_for_spacing, fixed_preassigned, min_gap=7)
+    spacing_nonnf_soft_penalties = general.add_minimum_spacing_soft_constraint(model, assign, days, day_roles, non_nf_for_spacing, fixed_preassigned, min_gap=6)
 
     # Hard Days 
-    hard_day_penalties = general.tuesday_thursday_fairness_penalty(model, assign, days, day_roles, residents)
-    weekend_vs_tues_thurs_penalties = general.weekend_vs_tue_thu_penalty(model, assign, days, day_roles, residents, weekend_days, threshold=2)
 
-    diverse_penalties = general.balanced_rotation_penalty(model, assign, days, day_roles, residents)
+#         hard_day_penalties=hard_day_penalties,
+#         hard_day_weight = 1,
+#         balance_hard_days_penalties=balance_hard_days_penalties,
+#         balance_hard_days_weight=1000000,
+#         weekend_vs_tues_thurs_penalties=consecutive_hard_days_penalties,
+#         weekend_vs_tues_thurs_weight = 1000000,
+
+
+    #hard_day_penalties = general.hard_days_fairness_penalty(model, assign, days, residents)
+    #balance_hard_days_penalties = general.balance_hard_days(model, assign, days, day_roles, non_nf_residents)
+    hard_day_penalties,  balance_hard_days_penalties = general.hard_days_balance_and_diversity_penalty(model, assign, days, day_roles, non_nf_residents)
+    consecutive_hard_days_penalties = general.consecutive_hard_days_penalty(model, assign, days, day_roles, residents, weekend_days, threshold=2)
+
+    # Existing diverse role penalties
+    diverse_role_penalties = general.balanced_rotation_penalty(model, assign, days, day_roles, residents)
+
+    # New diverse day penalties
+    diverse_day_penalties = general.balanced_day_penalty(model, assign, days, day_roles, residents)
+
     wr_penalties = wr.add_wr_soft_constraints(model, assign, days, day_roles, weekend_rounds_df, weekend_days)
 
-    # Build objective
+    # --- Hard day penalties ---
+    # 1️⃣ Hard vs non-hard balance
+    #hard_nonhard_penalties = general.hard_vs_nonhard_balance_penalty(model, assign, days, day_roles, residents)
+    general.hard_vs_nonhard_balance_constraint(model, assign, days, day_roles, residents)
+
+    # 2️⃣ Hard day diversity (Tue / Thu / WE)
+    hard_diversity_penalties = general.hard_days_diversity_penalty(model, assign, days, day_roles, residents)
+
+    # 3️⃣ Hard day max penalty (optional, e.g., max 3 hard days)
+    hard_max_penalties = general.hard_days_max_penalty(model, assign, days, day_roles, residents, max_hard=3)
+
+    # NS no THURSDAY
+    night_thursday_penalties = ns.night_thursday_penalty(model, assign, days, day_roles, ns_residents)
+
+    # --- Build objective ---
     objective.build_objective(
         model,
+        
         # Score Balance
         non_nf_balance_penalties=non_nf_balance_penalties,
-        non_nf_balance_weight = 10000000,
+        non_nf_balance_weight=1000000,
         nf_balance_penalties=nf_balance_penalties,
-        nf_balance_weight = 1000,
+        nf_balance_weight=100000,
 
         # Spacing Balance
         spacing_nonnf_soft_penalties=spacing_nonnf_soft_penalties,
-        non_nf_spacing_weight = 100000,
+        non_nf_spacing_weight=10000,
         spacing_nf_soft_penalties=spacing_nf_soft_penalties,
-        nf_spacing_weight = 1000,
+        nf_spacing_weight=1000,
         spacing_ns_soft_penalties=spacing_ns_soft_penalties,
-        ns_spacing_weight=1000,
+        ns_spacing_weight=100000,
 
         # Hard Days
-        hard_day_penalties=hard_day_penalties,
-        hard_day_weight = 1000000,
-        weekend_vs_tues_thurs_penalties=weekend_vs_tues_thurs_penalties,
-        weekend_vs_tues_thurs_weight = 10000,
+        #hard_nonhard_penalties=hard_nonhard_penalties,
+        hard_nonhard_weight=1000000,
+        hard_diversity_penalties=hard_diversity_penalties,
+        hard_diversity_weight=1000000,
+        hard_max_penalties=hard_max_penalties,
+        hard_max_weight=10000,
 
         # Roles
-        diverse_penalties=diverse_penalties,
-        diverse_weight = 1000000,
+        diverse_role_penalties=diverse_role_penalties,
+        diverse_role_weight=100000,
+        diverse_days_penalties=diverse_day_penalties,
+        diverse_days_weight=100000,
         role_pref_penalties=role_pref_penalties,
-        role_pref_weight = 100,
+        role_pref_weight=1000,
         nf_day_pref_penalties=nf_day_pref_penalties,
-        nf_day_pref_weight = 1,
+        nf_day_pref_weight=1000,
         wr_penalties=wr_penalties,
-        wr_pref_weight = 1)
-    
+        wr_pref_weight=1000,
+
+        night_thursday_penalties=night_thursday_penalties,
+        night_thursday_weight=1000
+    )
+        
     # -----------------------------------------------------
     # 7. Solve the model
     # -----------------------------------------------------

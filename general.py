@@ -281,45 +281,78 @@ def add_score_balance_soft_penalties(model, score_vars, residents, max_points, t
 
     return penalties
 
-def tuesday_thursday_fairness_penalty(model, assign, days, roles, residents):
+def hard_days_balance_and_diversity_penalty(model, assign, days, roles, residents):
     """
-    Soft fairness constraint: Penalize residents assigned to Tue/Thu/Fri/Sat too often.
-    
-    Rules:
-    - 0 or 1 hard days → no penalty
-    - 2+ hard days → penalty = count - 1
+    Soft constraints for hard days:
+    1️⃣ Hard vs non-hard balance: each resident should have a mix of hard and non-hard days.
+    2️⃣ Hard day diversity: Tue, Thu, WE (Fri+Sat) should be roughly evenly distributed.
+    Returns:
+        balance_penalties, diversity_penalties
     """
-    
-    penalty_vars = []
+    balance_penalties = []
+    diversity_penalties = []
 
-    # Filter all Tue/Thu/Fri/Sat dates
-    hard_days = [d for d in days if d.strftime('%a') in ['Tue', 'Thu', 'Fri', 'Sat']]
+    # Define hard day categories
+    categories = {
+        "Tue": [d for d in days if d.strftime('%a') == "Tue"],
+        "Thu": [d for d in days if d.strftime('%a') == "Thu"],
+        "WE":  [d for d in days if d.strftime('%a') in ["Fri", "Sat"]],
+    }
 
-    for resident in residents:
-        # Count number of hard day assignments for this resident
-        hard_day_count = model.NewIntVar(0, len(hard_days) * len(roles), f"{resident}_hard_day_count")
-        model.Add(hard_day_count == sum(assign[(d, role, resident)] for d in hard_days for role in roles))
+    for r in residents:
+        # --- Count hard days and non-hard days ---
+        hard_flags = [assign[(d, role, r)] for d in days for role in roles
+                      if d.strftime('%a') in ['Tue','Thu','Fri','Sat'] and (d, role, r) in assign]
+        non_hard_flags = [assign[(d, role, r)] for d in days for role in roles
+                          if d.strftime('%a') not in ['Tue','Thu','Fri','Sat'] and (d, role, r) in assign]
 
-        # Boolean flag for exceeding 1 hard day
-        exceeds_one = model.NewBoolVar(f"{resident}_exceeds_one_hard_day")
-        model.Add(hard_day_count >= 2).OnlyEnforceIf(exceeds_one)
-        model.Add(hard_day_count < 2).OnlyEnforceIf(exceeds_one.Not())
+        if hard_flags and non_hard_flags:
+            hard_count = model.NewIntVar(0, len(hard_flags), f"{r}_hard_count")
+            model.Add(hard_count == sum(hard_flags))
 
-        # Penalty variable: count - 1 if >1, else 0
-        penalty = model.NewIntVar(0, len(hard_days) * len(roles), f"{resident}_hard_day_penalty")
-        model.Add(penalty == hard_day_count - 1).OnlyEnforceIf(exceeds_one)
-        model.Add(penalty == 0).OnlyEnforceIf(exceeds_one.Not())
+            non_hard_count = model.NewIntVar(0, len(non_hard_flags), f"{r}_non_hard_count")
+            model.Add(non_hard_count == sum(non_hard_flags))
 
-        penalty_vars.append(penalty)
+            # Penalty if too few non-hard days relative to hard days
+            diff = model.NewIntVar(-len(days), len(days), f"{r}_hard_nonhard_diff")
+            model.Add(diff == hard_count - non_hard_count)
 
-    return penalty_vars
+            abs_diff = model.NewIntVar(0, len(days), f"{r}_hard_nonhard_absdiff")
+            model.AddAbsEquality(abs_diff, diff)
 
+            over = model.NewBoolVar(f"{r}_hard_nonhard_over")
+            model.Add(abs_diff > 1).OnlyEnforceIf(over)
+            model.Add(abs_diff <= 1).OnlyEnforceIf(over.Not())
+            balance_penalties.append(over)
+
+        # --- Hard day diversity ---
+        cat_counts = {}
+        for cat, cat_days in categories.items():
+            flags = [assign[(d, role, r)] for d in cat_days for role in roles if (d, role, r) in assign]
+            if flags:
+                cat_count = model.NewIntVar(0, len(flags), f"{r}_{cat}_count")
+                model.Add(cat_count == sum(flags))
+                cat_counts[cat] = cat_count
+
+        cat_list = list(cat_counts.keys())
+        for i in range(len(cat_list)):
+            for j in range(i+1, len(cat_list)):
+                diff = model.NewIntVar(-len(days), len(days), f"{r}_hard_diff_{cat_list[i]}_{cat_list[j]}")
+                model.Add(diff == cat_counts[cat_list[i]] - cat_counts[cat_list[j]])
+
+                abs_diff = model.NewIntVar(0, len(days), f"{r}_hard_absdiff_{cat_list[i]}_{cat_list[j]}")
+                model.AddAbsEquality(abs_diff, diff)
+
+                over = model.NewBoolVar(f"{r}_hard_diversity_over_{cat_list[i]}_{cat_list[j]}")
+                model.Add(abs_diff > 1).OnlyEnforceIf(over)
+                model.Add(abs_diff <= 1).OnlyEnforceIf(over.Not())
+                diversity_penalties.append(over)
+
+    return balance_penalties, diversity_penalties
 
 def balanced_rotation_penalty(model, assign, days, roles, residents):
     """
     Soft constraint: penalize imbalance in role distribution.
-    Differences between role counts should ideally be <= 1.
-    Larger differences incur penalties.
     """
     penalties = []
 
@@ -478,7 +511,7 @@ def add_minimum_spacing_soft_constraint(
     return penalties
 
 
-def weekend_vs_tue_thu_penalty(model, assign, days, roles, residents, weekend_days, threshold=2):
+def consecutive_hard_days_penalty(model, assign, days, roles, residents, weekend_days, threshold=2):
     """
     Soft constraint: for weekend + Tue/Thu assignments, penalize consecutive assignments.
     If a resident has an assignment on one of these days, the next assignment on any of these
@@ -534,4 +567,188 @@ def weekend_vs_tue_thu_penalty(model, assign, days, roles, residents, weekend_da
                 prev_assigned = assigned_var
 
     return penalty_vars
+
+def balanced_day_penalty(model, assign, days, roles, residents):
+    """
+    Soft constraint: penalize imbalance in day assignments per resident.
+    Differences between day categories (Mon, Tue, Wed, Thu, WE, Sun) ideally <= 1.
+    Friday+Saturday are considered a single "WE" category.
+    Returns a single list of penalties.
+    """
+    penalties = []
+
+    # Define day categories
+    categories = {
+        "Mon": [d for d in days if d.strftime("%a") == "Mon"],
+        "Tue": [d for d in days if d.strftime("%a") == "Tue"],
+        "Wed": [d for d in days if d.strftime("%a") == "Wed"],
+        "Thu": [d for d in days if d.strftime("%a") == "Thu"],
+        "WE":  [d for d in days if d.strftime("%a") in ["Fri", "Sat"]],
+        "Sun": [d for d in days if d.strftime("%a") == "Sun"]
+    }
+
+    for r in residents:
+        # Count assignments per category
+        cat_counts = {}
+        for cat, cat_days in categories.items():
+            flags = [assign[(d, role, r)] for d in cat_days for role in roles if (d, role, r) in assign]
+            if flags:
+                count_var = model.NewIntVar(0, len(flags), f"{r}_{cat}_count")
+                model.Add(count_var == sum(flags))
+                cat_counts[cat] = count_var
+
+        # Penalize pairwise differences > 1
+        cat_list = list(cat_counts.keys())
+        for i in range(len(cat_list)):
+            for j in range(i + 1, len(cat_list)):
+                c1, c2 = cat_list[i], cat_list[j]
+
+                # Absolute difference using AddAbsEquality
+                diff = model.NewIntVar(0, len(days), f"{r}_day_diff_{c1}_{c2}")
+                model.AddAbsEquality(diff, cat_counts[c1] - cat_counts[c2])
+
+                # Boolean: imbalance exceeds 1
+                over = model.NewBoolVar(f"{r}_day_over_{c1}_{c2}")
+                model.Add(diff > 1).OnlyEnforceIf(over)
+                model.Add(diff <= 1).OnlyEnforceIf(over.Not())
+
+                penalties.append(over)
+
+    return penalties
+
+# NEW HARD DAYS
+# def hard_vs_nonhard_balance_penalty(model, assign, days, roles, residents):
+#     """
+#     Soft constraint: penalize if a resident has more than 1 hard day without any non-hard day.
+#     Returns list of penalties (one per resident per condition).
+#     """
+#     penalties = []
+
+#     for r in residents:
+#         hard_flags = [assign[(d, role, r)] for d in days for role in roles
+#                       if d.strftime('%a') in ['Tue','Thu','Fri','Sat'] and (d, role, r) in assign]
+#         non_hard_flags = [assign[(d, role, r)] for d in days for role in roles
+#                           if d.strftime('%a') not in ['Tue','Thu','Fri','Sat'] and (d, role, r) in assign]
+
+#         if hard_flags and non_hard_flags:
+#             hard_count = model.NewIntVar(0, len(hard_flags), f"{r}_hard_count")
+#             model.Add(hard_count == sum(hard_flags))
+
+#             non_hard_count = model.NewIntVar(0, len(non_hard_flags), f"{r}_non_hard_count")
+#             model.Add(non_hard_count == sum(non_hard_flags))
+
+#             diff = model.NewIntVar(-len(days), len(days), f"{r}_hard_nonhard_diff")
+#             model.Add(diff == hard_count - non_hard_count)
+
+#             abs_diff = model.NewIntVar(0, len(days), f"{r}_hard_nonhard_absdiff")
+#             model.AddAbsEquality(abs_diff, diff)
+
+#             over = model.NewBoolVar(f"{r}_hard_nonhard_over")
+#             model.Add(abs_diff > 1).OnlyEnforceIf(over)
+#             model.Add(abs_diff <= 1).OnlyEnforceIf(over.Not())
+#             penalties.append(over)
+
+#     return penalties
+
+def hard_vs_nonhard_balance_constraint(model, assign, days, roles, residents):
+    """
+    Hard constraint:
+    - If a resident has more than 1 hard day, they must also have at least 1 non-hard day.
+    """
+
+    for r in residents:
+        # Flags for hard days
+        hard_flags = [assign[(d, role, r)]
+                      for d in days for role in roles
+                      if d.strftime('%a') in ['Tue','Thu','Fri','Sat'] and (d, role, r) in assign]
+
+        # Flags for non-hard days
+        non_hard_flags = [assign[(d, role, r)]
+                          for d in days for role in roles
+                          if d.strftime('%a') not in ['Tue','Thu','Fri','Sat'] and (d, role, r) in assign]
+
+        if hard_flags:
+            hard_count = model.NewIntVar(0, len(hard_flags), f"{r}_hard_count")
+            model.Add(hard_count == sum(hard_flags))
+
+            # If there are possible non-hard slots, track them
+            if non_hard_flags:
+                non_hard_count = model.NewIntVar(0, len(non_hard_flags), f"{r}_non_hard_count")
+                model.Add(non_hard_count == sum(non_hard_flags))
+            else:
+                # No non-hard slots → treat as always 0
+                non_hard_count = model.NewIntVar(0, 0, f"{r}_non_hard_count")
+                model.Add(non_hard_count == 0)
+
+            # Boolean: hard_count > 1
+            cond = model.NewBoolVar(f"{r}_hard_over1")
+            model.Add(hard_count > 1).OnlyEnforceIf(cond)
+            model.Add(hard_count <= 1).OnlyEnforceIf(cond.Not())
+
+            # Enforce: if hard_count > 1 → non_hard_count ≥ 1
+            model.Add(non_hard_count >= 1).OnlyEnforceIf(cond)
+
+def hard_days_diversity_penalty(model, assign, days, roles, residents):
+    """
+    Soft constraint: penalize imbalance in distribution of hard days (Tue, Thu, WE) within each resident.
+    Returns list of penalties (one per resident per pair of categories).
+    """
+    penalties = []
+
+    categories = {
+        "Tue": [d for d in days if d.strftime('%a') == "Tue"],
+        "Thu": [d for d in days if d.strftime('%a') == "Thu"],
+        "WE":  [d for d in days if d.strftime('%a') in ["Fri","Sat"]],
+    }
+
+    for r in residents:
+        cat_counts = {}
+        for cat, cat_days in categories.items():
+            flags = [assign[(d, role, r)] for d in cat_days for role in roles if (d, role, r) in assign]
+            if flags:
+                count_var = model.NewIntVar(0, len(flags), f"{r}_{cat}_count")
+                model.Add(count_var == sum(flags))
+                cat_counts[cat] = count_var
+
+        cat_list = list(cat_counts.keys())
+        for i in range(len(cat_list)):
+            for j in range(i+1, len(cat_list)):
+                diff = model.NewIntVar(-len(days), len(days), f"{r}_hard_diff_{cat_list[i]}_{cat_list[j]}")
+                model.Add(diff == cat_counts[cat_list[i]] - cat_counts[cat_list[j]])
+
+                abs_diff = model.NewIntVar(0, len(days), f"{r}_hard_absdiff_{cat_list[i]}_{cat_list[j]}")
+                model.AddAbsEquality(abs_diff, diff)
+
+                over = model.NewBoolVar(f"{r}_hard_diversity_over_{cat_list[i]}_{cat_list[j]}")
+                model.Add(abs_diff > 1).OnlyEnforceIf(over)
+                model.Add(abs_diff <= 1).OnlyEnforceIf(over.Not())
+                penalties.append(over)
+
+    return penalties
+
+def hard_days_max_penalty(model, assign, days, roles, residents, max_hard=3):
+    """
+    Soft constraint: penalize if a resident has more than max_hard hard days.
+    Returns list of penalties (one per resident exceeding max_hard).
+    """
+    penalties = []
+
+    for r in residents:
+        hard_flags = [assign[(d, role, r)] for d in days for role in roles
+                      if d.strftime('%a') in ['Tue','Thu','Fri','Sat'] and (d, role, r) in assign]
+        if hard_flags:
+            hard_count = model.NewIntVar(0, len(hard_flags), f"{r}_hard_count")
+            model.Add(hard_count == sum(hard_flags))
+
+            excess = model.NewIntVar(0, len(hard_flags), f"{r}_hard_excess")
+            over = model.NewBoolVar(f"{r}_hard_over_max")
+            model.Add(hard_count > max_hard).OnlyEnforceIf(over)
+            model.Add(hard_count <= max_hard).OnlyEnforceIf(over.Not())
+            model.Add(excess == hard_count - max_hard).OnlyEnforceIf(over)
+            model.Add(excess == 0).OnlyEnforceIf(over.Not())
+            penalties.append(excess)
+
+    return penalties
+
+
 

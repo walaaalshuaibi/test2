@@ -14,9 +14,6 @@ def resident_score_expr(assign, days, day_roles, resident, weekend_days, weekend
     `days` is an iterable of dates used as keys in `assign` (will be normalized).
     `assign[(d, role, resident)]` must be valid for d in days, role in day_roles.
     """
-
-    import pandas as pd
-
     # Normalize resident name for comparisons
     resident_key = str(resident).strip().lower()
 
@@ -319,7 +316,7 @@ def get_all_assigned_dates(
     # ----------------------------------------------------
     if nf_calendar_df is not None and isinstance(nf_calendar_df, pd.DataFrame) and not nf_calendar_df.empty:
         if "name" in nf_calendar_df.columns and "date" in nf_calendar_df.columns:
-            nf_dates = nf_calendar_df.loc[nf_calendar_df["name"] == r, "date"]
+            nf_dates = nf_calendar_df.loc[nf_calendar_df["name"].strip() == r, "date"]
             for d in nf_dates:
                 all_dates.add(pd.to_datetime(d).date())
 
