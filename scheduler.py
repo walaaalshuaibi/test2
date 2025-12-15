@@ -293,17 +293,34 @@ def schedule_with_ortools_full_modular(
     # 7. Solve the model
     # -----------------------------------------------------
 
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 30
-    solver.parameters.random_seed = 10
-    solver.parameters.num_search_workers = 16
-    solver.parameters.use_lns = True
-    solver.parameters.search_branching = cp_model.PORTFOLIO_SEARCH
-    #solver.parameters.linearization_level = 2
+    import streamlit as st
 
-    status = solver.Solve(model)
+    MAX_TRIES = 3
+    solver = None
+    status = None
+    solve_attempt = None
 
-    if status not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+    for attempt in range(1, MAX_TRIES + 1):
+        st.write(f"🔁 Solver attempt {attempt}/{MAX_TRIES}")  # <-- Streamlit UI
+
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = 30
+        solver.parameters.random_seed = random.randint(1, 1_000_000)
+        solver.parameters.num_search_workers = 16
+        solver.parameters.use_lns = True
+        solver.parameters.search_branching = cp_model.PORTFOLIO_SEARCH
+
+        status = solver.Solve(model)
+
+        if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            st.success(f"✅ Feasible solution found on attempt {attempt}")
+            solve_attempt = attempt
+            break
+        else:
+            st.warning(f"❌ No feasible solution on attempt {attempt}")
+
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        st.error("🚫 No feasible solution found after 3 attempts")
         raise RuntimeError("No feasible solution found")
     
     # -----------------------------------------------------
