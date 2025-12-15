@@ -32,10 +32,6 @@ def save_schedule_as_excel(df, output_path="Schedule.xlsx"):
     # Reorder: other columns + day/night pairs + WR at the end
     df = df[other_cols + day_night_cols + ['wr']]
 
-    # Convert 'Date' column to readable format
-    if 'date' in df.columns:
-        df['date'] = pd.to_datetime(df['date'], errors='coerce').dt.strftime('%d-%b')
-
     # -------------------------
     # Split WR column into two if multiple names
     # -------------------------
