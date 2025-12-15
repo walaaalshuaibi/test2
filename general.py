@@ -73,45 +73,41 @@ def add_shift_cap_constraints(
         model.Add(score_vars[r] <= max_points[r])
         model.Add(weekend_shifts <= weekend_limits[r])
 
-def add_no_consecutive_weekends_constraints(model, assign, days, roles, residents):
+def no_two_consecutive_weekends(model, assign, days, roles, residents):
     """
     Hard constraint:
-    Prevent residents from being assigned to two consecutive weekends (Fri+Sat of consecutive ISO weeks).
+    - If a resident works a Friday, they cannot work the following Fri or Sat
+    - If a resident works a Saturday, they cannot work the following Fri or Sat
     """
 
-    # Group weekend days by ISO week
-    weekend_by_week = {}
-    for d in days:
-        if d.strftime('%a') in ['Fri', 'Sat']:
-            week = d.isocalendar()[1]  # ISO week number
-            weekend_by_week.setdefault(week, []).append(d)
-
-    sorted_weeks = sorted(weekend_by_week.keys())
+    days_set = set(days)
 
     for r in residents:
-        # --- Build weekend flags per week ---
-        weekend_flags = {}
-        for w in sorted_weeks:
-            wknd_vars = [assign[(d, role, r)]
-                         for d in weekend_by_week[w]
-                         for role in roles
-                         if (d, role, r) in assign]
+        for d in days:
+            dow = d.strftime("%a")
 
-            if wknd_vars:
-                flag = model.NewBoolVar(f"{r}_wknd_{w}_worked")
-                model.AddMaxEquality(flag, wknd_vars)
-                weekend_flags[w] = flag
-            else:
-                # No possible assignments → force flag = 0
-                flag = model.NewBoolVar(f"{r}_wknd_{w}_worked")
-                model.Add(flag == 0)
-                weekend_flags[w] = flag
+            if dow not in ["Fri", "Sat"]:
+                continue
 
-        # --- Add consecutive weekend constraints ---
-        for i in range(len(sorted_weeks) - 1):
-            w1, w2 = sorted_weeks[i], sorted_weeks[i + 1]
-            # Cannot work both consecutive weekends
-            model.Add(weekend_flags[w1] + weekend_flags[w2] <= 1)
+            # Determine which future days to block
+            if dow == "Fri":
+                blocked_days = [d + pd.Timedelta(days=7), d + pd.Timedelta(days=8)]
+            else:  # Saturday
+                blocked_days = [d + pd.Timedelta(days=6), d + pd.Timedelta(days=7)]
+
+            for role in roles:
+                if (d, role, r) not in assign:
+                    continue
+
+                for bd in blocked_days:
+                    if bd not in days_set:
+                        continue
+
+                    for role2 in roles:
+                        if (bd, role2, r) in assign:
+                            # If assigned on this Fri/Sat → forbid next weekend
+                            model.Add(assign[(bd, role2, r)] == 0)\
+                                 .OnlyEnforceIf(assign[(d, role, r)])
                     
 def add_cooldown_constraints(model, assign, days, roles, residents, cooldown=3):
     """
