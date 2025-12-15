@@ -73,16 +73,17 @@ def add_shift_cap_constraints(
         model.Add(score_vars[r] <= max_points[r])
         model.Add(weekend_shifts <= weekend_limits[r])
 
-def add_no_consecutive_weekend_constraint(model, assign, roles, residents, weekend_days):
+def no_two_consecutive_weekends(model, assign, days, roles, residents):
     """
-    Prevent residents from working two consecutive weekends.
-    
-    weekend_days: set of date objects that are Friday or Saturday.
-    If a resident works ANY shift on weekend W,
-    they cannot work ANY shift on weekend W+1.
+    Hard constraint: prevent any resident from working two consecutive weekends.
+    - Friday + Saturday is considered a single "weekend".
+    - Works for any number of roles per day.
     """
 
-    # Convert weekend days into grouped weekends (by ISO week)
+    # Identify all weekend days
+    weekend_days = [d for d in days if d.strftime("%a") in ["Fri", "Sat"]]
+
+    # Group weekends by ISO week
     weekend_by_week = {}
     for d in weekend_days:
         week = d.isocalendar().week
@@ -90,38 +91,37 @@ def add_no_consecutive_weekend_constraint(model, assign, roles, residents, weeke
 
     sorted_weeks = sorted(weekend_by_week.keys())
 
+    # For each resident, enforce no consecutive weekends
     for r in residents:
         for i in range(len(sorted_weeks) - 1):
+            w1, w2 = sorted_weeks[i], sorted_weeks[i + 1]
 
-            w1 = sorted_weeks[i]
-            w2 = sorted_weeks[i + 1]
-
-            # BoolVars: did this resident work in weekend w1 or w2?
-            worked_w1 = model.NewBoolVar(f"wknd_{w1}_worked_{r}")
-            worked_w2 = model.NewBoolVar(f"wknd_{w2}_worked_{r}")
-
-            # Weekend W1 assign vars
+            # Collect all assignment variables for each weekend
             wknd1_vars = [
                 assign[(d, role, r)]
                 for d in weekend_by_week[w1]
                 for role in roles
+                if (d, role, r) in assign
             ]
-
-            # Weekend W2 assign vars
             wknd2_vars = [
                 assign[(d, role, r)]
                 for d in weekend_by_week[w2]
                 for role in roles
+                if (d, role, r) in assign
             ]
 
-            # worked_w1 = OR(all roles in weekend 1)
-            model.AddMaxEquality(worked_w1, wknd1_vars)
+            if not wknd1_vars or not wknd2_vars:
+                continue  # Skip if resident has no assignments on a weekend
 
-            # worked_w2 = OR(all roles in weekend 2)
+            # BoolVar: resident works in weekend 1 or 2
+            worked_w1 = model.NewBoolVar(f"wknd_{w1}_worked_{r}")
+            worked_w2 = model.NewBoolVar(f"wknd_{w2}_worked_{r}")
+
+            model.AddMaxEquality(worked_w1, wknd1_vars)
             model.AddMaxEquality(worked_w2, wknd2_vars)
 
-            # Rule: If resident works W1 → cannot work W2
-            model.Add(worked_w2 == 0).OnlyEnforceIf(worked_w1)
+            # Hard constraint: cannot work both weekends
+            model.AddBoolOr([worked_w1.Not(), worked_w2.Not()])
                     
 def add_cooldown_constraints(model, assign, days, roles, residents, cooldown=3):
     """
