@@ -242,7 +242,7 @@ def schedule_with_ortools_full_modular(
     hard_diversity_penalties = general.hard_days_diversity_penalty(model, assign, days, day_roles, residents)
 
     # 3️⃣ Hard day max penalty (optional, e.g., max 3 hard days)
-    hard_max_penalties = general.hard_days_max_penalty(model, assign, days, day_roles, residents, max_hard=3)
+    hard_max_penalties = general.hard_days_max_penalty(model, assign, days, day_roles, residents, max_hard=2)
 
     # NS no THURSDAY
     night_thursday_penalties = ns.night_thursday_penalty(model, assign, days, day_roles, ns_residents)
