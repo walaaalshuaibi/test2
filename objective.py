@@ -288,20 +288,20 @@ def extract_schedule(
             "WR Count": wr_counts.get(r, 0),
             "NF Resident": "Yes" if night_counts.get(r, 0) > 2 else "No",
             "NS Resident": "Yes" if r in ns_names else "No",
-            "Assigned Days": ", ".join(assigned_weekdays),  # <-- NEW: weekdays
-            "spacing_avg": spacing.get("avg_gap"),
-            "spacing_min": spacing.get("min_gap"),
-            "spacing_max": spacing.get("max_gap"),
-            "spacing_gaps_count": spacing.get("num_gaps", 0),
-            "spacing_overall_avg": spacing_overall["avg_gap"],
-            "spacing_overall_min": spacing_overall["min_gap"],
-            "spacing_overall_max": spacing_overall["max_gap"],
-            "spacing_overall_gaps_count": spacing_overall["num_gaps"],
-            "weekend_shifts": weekend_counts_per_res.get(r, 0),
-            "thursday_shifts": thursday_counts_per_res.get(r, 0),
-            "tuesday_shifts": tuesday_counts_per_res.get(r, 0),
-            "Year": resident_levels.get(r),
-            "WEEKEND ROLE": ", ".join(sorted(weekend_roles_per_res.get(r, [])))
+            # "Assigned Days": ", ".join(assigned_weekdays),  # <-- NEW: weekdays
+            # "spacing_avg": spacing.get("avg_gap"),
+            # "spacing_min": spacing.get("min_gap"),
+            # "spacing_max": spacing.get("max_gap"),
+            # "spacing_gaps_count": spacing.get("num_gaps", 0),
+            # "spacing_overall_avg": spacing_overall["avg_gap"],
+            # "spacing_overall_min": spacing_overall["min_gap"],
+            # "spacing_overall_max": spacing_overall["max_gap"],
+            # "spacing_overall_gaps_count": spacing_overall["num_gaps"],
+            # "weekend_shifts": weekend_counts_per_res.get(r, 0),
+            # "thursday_shifts": thursday_counts_per_res.get(r, 0),
+            # "tuesday_shifts": tuesday_counts_per_res.get(r, 0),
+            # "Year": resident_levels.get(r),
+            # "WEEKEND ROLE": ", ".join(sorted(weekend_roles_per_res.get(r, [])))
         }
         for role in roles:
             row[f"role_{role}_count"] = role_counts.get(r, {}).get(role, 0)
