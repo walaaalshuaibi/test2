@@ -281,7 +281,7 @@ def extract_schedule(
                                 else (max_shifts.get(r) if isinstance(max_shifts, dict) else max_shifts))
         row = {
             "Name": r,
-            "Total Shifts": day_shift_counts.get(r, 0),
+            "Total Shifts": len(assigned_dates),
             "Score": solver.Value(score_vars[r]) if r in score_vars else None,
             "Max Shifts": effective_max_shifts,
             "Max Points": max_points.get(r) if isinstance(max_points, dict) else max_points,

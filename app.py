@@ -1,5 +1,3 @@
-# run streamlit code: streamlit run app.py
-
 # app.py
 import streamlit as st
 import pandas as pd
@@ -200,103 +198,103 @@ with tab2:
         # ---------------------------
         # Regular Resident Limits
         # ---------------------------
-        st.subheader("👤 Regular Resident Limits")
-        col1, col2, col3 = st.columns([3,3,1])
-        with col1:
-            res_shift_max = st.number_input(
-                "Max Shifts",
-                min_value=0,
-                step=1,
-                value=st.session_state.get("res_shift_max_input", DEFAULTS["res_shift_max"]),
-                key="res_shift_max_input"
-            )
-        with col2:
-            res_points_max = st.number_input(
-                "Max Points",
-                min_value=0,
-                step=1,
-                value=st.session_state.get("res_points_max_input", DEFAULTS["res_points_max"]),
-                key="res_points_max_input"
-            )
-        with col3:
-            st.button("🔄 Restore Defaults", on_click=restore_regular_defaults, key="restore_regular_limits")
-        resident_max_limit = (int(res_shift_max), int(res_points_max))
+        # st.subheader("👤 Regular Resident Limits")
+        # col1, col2, col3 = st.columns([3,3,1])
+        # with col1:
+        #     res_shift_max = st.number_input(
+        #         "Max Shifts",
+        #         min_value=0,
+        #         step=1,
+        #         value=st.session_state.get("res_shift_max_input", DEFAULTS["res_shift_max"]),
+        #         key="res_shift_max_input"
+        #     )
+        # with col2:
+        #     res_points_max = st.number_input(
+        #         "Max Points",
+        #         min_value=0,
+        #         step=1,
+        #         value=st.session_state.get("res_points_max_input", DEFAULTS["res_points_max"]),
+        #         key="res_points_max_input"
+        #     )
+        # with col3:
+        #     st.button("🔄 Restore Defaults", on_click=restore_regular_defaults, key="restore_regular_limits")
+        # resident_max_limit = (int(res_shift_max), int(res_points_max))
 
         # ---------------------------
         # Night Float (NF) Limits
         # ---------------------------
-        st.subheader("🧠 Night Float (NF) Limits")
-        col1, col2, col3 = st.columns([3,3,1])
-        with col1:
-            nf_shift_max = st.number_input(
-                "Max NF Shifts",
-                min_value=0,
-                step=1,
-                value=st.session_state.get("nf_shift_max_input", DEFAULTS["nf_shift_max"]),
-                key="nf_shift_max_input"
-            )
-        with col2:
-            nf_points_max = st.number_input(
-                "Max NF Points",
-                min_value=0,
-                step=1,
-                value=st.session_state.get("nf_points_max_input", DEFAULTS["nf_points_max"]),
-                key="nf_points_max_input"
-            )
-        with col3:
-            st.button("🔄 Restore Defaults", on_click=restore_nf_defaults, key="restore_nf_limits")
-        nf_max_limit = (int(nf_shift_max), int(nf_points_max))
+        # st.subheader("🧠 Night Float (NF) Limits")
+        # col1, col2, col3 = st.columns([3,3,1])
+        # with col1:
+        #     nf_shift_max = st.number_input(
+        #         "Max NF Shifts",
+        #         min_value=0,
+        #         step=1,
+        #         value=st.session_state.get("nf_shift_max_input", DEFAULTS["nf_shift_max"]),
+        #         key="nf_shift_max_input"
+        #     )
+        # with col2:
+        #     nf_points_max = st.number_input(
+        #         "Max NF Points",
+        #         min_value=0,
+        #         step=1,
+        #         value=st.session_state.get("nf_points_max_input", DEFAULTS["nf_points_max"]),
+        #         key="nf_points_max_input"
+        #     )
+        # with col3:
+        #     st.button("🔄 Restore Defaults", on_click=restore_nf_defaults, key="restore_nf_limits")
+        # nf_max_limit = (int(nf_shift_max), int(nf_points_max))
 
         # ---------------------------
         # Buffers (2x2 layout)
         # ---------------------------
-        st.subheader("🛡️ Buffers (in days)")
-        col0, col5 = st.columns([8,1])
-        with col5:
-            st.button("🔄 Restore Defaults", on_click=restore_buffers_defaults, key="restore_buffers")
+        # st.subheader("🛡️ Buffers (in days)")
+        # col0, col5 = st.columns([8,1])
+        # with col5:
+        #     st.button("🔄 Restore Defaults", on_click=restore_buffers_defaults, key="restore_buffers")
 
-        col1, col2 = st.columns(2)
-        with col1:
-            nf_buffer = st.number_input(
-                "Blocked out days: before/after Night Float (NF) week",
-                min_value=0,
-                step=1,
-                value=st.session_state.get("nf_buffer_input", DEFAULTS["nf_buffer"]),
-                key="nf_buffer_input"
-            )
-        with col2:
-            ns_buffer = st.number_input(
-                "Blocked out days: before/after NS shifts",
-                min_value=0,
-                step=1,
-                value=st.session_state.get("ns_buffer_input", DEFAULTS["ns_buffer"]),
-                key="ns_buffer_input"
-            )
+        # col1, col2 = st.columns(2)
+        # with col1:
+        #     nf_buffer = st.number_input(
+        #         "Blocked out days: before/after Night Float (NF) week",
+        #         min_value=0,
+        #         step=1,
+        #         value=st.session_state.get("nf_buffer_input", DEFAULTS["nf_buffer"]),
+        #         key="nf_buffer_input"
+        #     )
+        # with col2:
+        #     ns_buffer = st.number_input(
+        #         "Blocked out days: before/after NS shifts",
+        #         min_value=0,
+        #         step=1,
+        #         value=st.session_state.get("ns_buffer_input", DEFAULTS["ns_buffer"]),
+        #         key="ns_buffer_input"
+        #     )
 
-        col3, col4 = st.columns(2)
-        with col3:
-            wr_buffer = st.number_input(
-                "Blocked out days: before/after Weekend Rounds (WR)",
-                min_value=0,
-                step=1,
-                value=st.session_state.get("wr_buffer_input", DEFAULTS["wr_buffer"]),
-                key="wr_buffer_input"
-            )
-        with col4:
-            vac_buffer = st.number_input(
-                "Blocked out days: before/after Vacation",
-                min_value=0,
-                step=1,
-                value=st.session_state.get("vac_buffer_input", DEFAULTS["vacation_buffer"]),
-                key="vac_buffer_input"
-            )
+        # col3, col4 = st.columns(2)
+        # with col3:
+        #     wr_buffer = st.number_input(
+        #         "Blocked out days: before/after Weekend Rounds (WR)",
+        #         min_value=0,
+        #         step=1,
+        #         value=st.session_state.get("wr_buffer_input", DEFAULTS["wr_buffer"]),
+        #         key="wr_buffer_input"
+        #     )
+        # with col4:
+        #     vac_buffer = st.number_input(
+        #         "Blocked out days: before/after Vacation",
+        #         min_value=0,
+        #         step=1,
+        #         value=st.session_state.get("vac_buffer_input", DEFAULTS["vacation_buffer"]),
+        #         key="vac_buffer_input"
+        #     )
 
-        buffers = (
-                int(nf_buffer),       # NF_buffer
-                int(vac_buffer),      # Vacation_buffer
-                int(wr_buffer),       # WR_buffer
-                int(ns_buffer)        # NS_buffer
-            )
+        # buffers = (
+        #         int(nf_buffer),       # NF_buffer
+        #         int(vac_buffer),      # Vacation_buffer
+        #         int(wr_buffer),       # WR_buffer
+        #         int(ns_buffer)        # NS_buffer
+        #     )
 
         # ---------------------------
         # R2 Coverage
@@ -411,6 +409,24 @@ with tab2:
         # ---------------------------
         # Run Scheduler
         # ---------------------------
+
+        buffers = (
+                int(DEFAULTS["nf_buffer"]),       # NF_buffer
+                int(DEFAULTS["vacation_buffer"]),      # Vacation_buffer
+                int(DEFAULTS["wr_buffer"]),       # WR_buffer
+                int(DEFAULTS["ns_buffer"])        # NS_buffer
+            )
+        
+        resident_max_limit = (
+            int(DEFAULTS["res_shift_max"]),
+            int(DEFAULTS["res_points_max"]),
+        )
+
+        nf_max_limit = (
+            int(DEFAULTS["nf_shift_max"]),
+            int(DEFAULTS["nf_points_max"]),
+        )
+        
         if st.button("Run Scheduler 🚀", key="run_scheduler"):
             if start_date is None:
                 st.warning("⚠️ You must select a start date before running the scheduler.")

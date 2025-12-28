@@ -71,30 +71,34 @@ def build_nf_calendar(residents_df, start_date, buffers=None, nf_cols=None):
     return calendar_df
 
 
-def add_nf_day_preferences_seniors(model, assign, roles, days, nf_residents):
+def add_nf_day_preferences_seniors(
+    model,
+    assign,
+    roles,
+    days,
+    nf_residents
+):
     """
-    - Hard constraint: NF residents cannot be assigned to ER-1 role.
-    - Soft penalty: discourage NF residents from being assigned to day shifts
-      on non-preferred weekdays (anything other than Tue/Thu).
+    HARD CONSTRAINTS:
+    - NF residents cannot be assigned to ER-1 role.
+    - NF residents can only be assigned to DAY shifts on Tue / Thu.
+      (Day shifts on other weekdays are forbidden.)
     """
-    penalties = []
-    preferred_days = {1, 3}  # Tuesday=1, Thursday=3 (Python weekday: Monday=0)
+    preferred_days = {1, 3}  # Tuesday=1, Thursday=3
 
     for r in nf_residents:
         for d in days:
             weekday = pd.to_datetime(d).weekday()
             for role in roles:
-                # HARD CONSTRAINT: no ER-1 shifts for NF residents
-                if "er-1" in role.lower():
+                role_l = role.lower()
+
+                # HARD: no ER-1 shifts for NF residents
+                if "er-1" in role_l:
                     model.Add(assign[(d, role, r)] == 0)
 
-                # SOFT PENALTY: non-Tue/Thu day shifts
-                elif weekday not in preferred_days and "day" in role.lower():
-                    penalty_var = model.NewIntVar(0, 1, f"nf_day_penalty_{d}_{role}_{r}")
-                    model.Add(penalty_var == assign[(d, role, r)])
-                    penalties.append(penalty_var)
-
-    return penalties
+                # HARD: no day shifts outside Tue/Thu
+                if "day" in role_l and weekday not in preferred_days:
+                    model.Add(assign[(d, role, r)] == 0)
 
 def add_nf_day_preferences_juniors(model, assign, roles, days, nf_residents):
     """

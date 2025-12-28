@@ -145,6 +145,14 @@ def schedule_with_ortools_full_modular(
 
      # 2 Weekends or 2 WR => No Thursday
     general.add_no_thursday_after_weekend_constraint(model, assign, days, day_roles, residents, weekend_days, weekend_rounds_df)
+
+    # Add soft preference for NF day shifts (prefer Tue/Thu)
+    nf_day_pref_penalties = nf.add_nf_day_preferences_seniors(
+        model,
+        assign,
+        day_roles,
+        days,
+        nf_residents)
     
     # -----------------------------------------------------
     # 4. Optional Rules
@@ -174,15 +182,6 @@ def schedule_with_ortools_full_modular(
             days,
             residents,
             resident_levels,
-            nf_residents
-        )
-
-        # Add soft preference for NF day shifts (prefer Tue/Thu)
-        nf_day_pref_penalties = nf.add_nf_day_preferences_seniors(
-            model,
-            assign,
-            day_roles,
-            days,
             nf_residents
         )
 
