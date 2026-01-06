@@ -133,7 +133,7 @@ def schedule_with_ortools_full_modular(
     last_feasible_caps = None
 
     for tighten_round in range(1, MAX_TIGHTENING + 1): 
-        st.write(f"🔧 Tightening round {tighten_round}: NF cap={nf_cap}, non-NF cap={non_nf_cap}") 
+        #st.write(f"🔧 Tightening round {tighten_round}: NF cap={nf_cap}, non-NF cap={non_nf_cap}") 
         # Update caps for this iteration 
         max_shifts["NF"] = nf_cap 
         max_shifts["non_NF"] = non_nf_cap
