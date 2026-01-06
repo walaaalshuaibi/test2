@@ -1,17 +1,29 @@
 import datetime
 import pandas as pd
 import helper
-def add_weekend_rounds_constraint(model, assign, roles, weekend_rounds_df, resident_year, preassigned_wr_df=None, combined_blackout_dict=None):
+def add_weekend_rounds_constraint(
+    model,
+    assign,
+    roles,
+    weekend_rounds_df,
+    resident_year,
+    preassigned_wr_df=None,
+    combined_blackout_dict=None,
+    soft_grayouts=None
+):
     """ 
-    Add constraints to enforce weekend round assignments. 
-    - Seniors are pre-assigned EW
-    - other roles based on the pre-assigned wr df
-    """
+    Enforce weekend round assignments with blackout/grayout overrides.
     
-    # Ensure 'Date' column is in datetime format
-    weekend_rounds_df["date"] = pd.to_datetime(weekend_rounds_df['date']).dt.normalize()
+    - Preassigned WR residents are forced into their role/date and conflicts removed.
+    - Seniors are assigned to 'EW Day' on their weekend round dates.
+    - All assignments remove conflicting blackouts and grayouts.
+    - Prevents other residents from taking the same date-role.
+    """
 
-    # STEP 1: Handle preassigned WR residents
+    # Normalize dates
+    weekend_rounds_df["date"] = pd.to_datetime(weekend_rounds_df["date"]).dt.normalize()
+
+    # --- STEP 1: Handle preassigned WR residents ---
     if preassigned_wr_df is not None and not preassigned_wr_df.empty:
         preassigned_wr_df["date"] = pd.to_datetime(preassigned_wr_df["date"]).dt.normalize()
 
@@ -20,58 +32,70 @@ def add_weekend_rounds_constraint(model, assign, roles, weekend_rounds_df, resid
             date = pd.Timestamp(row["date"]).normalize()
             role = str(row["role"]).strip().lower()
 
-            # --- Handle blackout removal ---
-            if combined_blackout_dict is not None:
-                if isinstance(combined_blackout_dict, pd.DataFrame):
-                    before = len(combined_blackout_dict)
-                    combined_blackout_dict = combined_blackout_dict.loc[
-                        ~((combined_blackout_dict["name"].strip() == resident) &
-                          (combined_blackout_dict["date"] == date))
-                    ]
-                    after = len(combined_blackout_dict)
-                    if before != after:
-                        print(f"🟢 Removed blackout for {resident} on {date.date()} (preassigned {role})")
+            # Remove blackout/grayout conflicts
+            for coll, coll_name in [(combined_blackout_dict, "blackout"), (soft_grayouts, "soft grayout")]:
+                if coll is None:
+                    continue
+                if isinstance(coll, pd.DataFrame):
+                    mask = ~((coll["name"].str.strip() == resident) & (coll["date"] == date))
+                    removed = len(coll) - mask.sum()
+                    coll[:] = coll.loc[mask]
+                    if removed > 0:
+                        print(f"🟢 Removed {coll_name} for {resident} on {date.date()} (preassigned {role})")
+                elif isinstance(coll, dict) and resident in coll:
+                    before_len = len(coll[resident])
+                    coll[resident] = [d for d in coll[resident] if pd.to_datetime(d).normalize() != date]
+                    after_len = len(coll[resident])
+                    if before_len != after_len:
+                        print(f"🟢 Removed {coll_name} (dict) for {resident} on {date.date()} (preassigned {role})")
 
-                elif isinstance(combined_blackout_dict, dict):
-                    # If blackout is a lookup dict, remove that date from the resident’s blackout list
-                    if resident in combined_blackout_dict:
-                        before_len = len(combined_blackout_dict[resident])
-                        combined_blackout_dict[resident] = [
-                            d for d in combined_blackout_dict[resident]
-                            if pd.to_datetime(d).normalize() != date
-                        ]
-                        after_len = len(combined_blackout_dict[resident])
-                        if before_len != after_len:
-                            print(f"🟢 Removed blackout (dict) for {resident} on {date.date()} (preassigned {role})")
-
-            # Defensive check for invalid roles 
+            # Defensive role check
             if role not in roles:
-                print(f"⚠️ Skipping preassigned WR for {resident}: role '{role}' not found in roles list.")
+                print(f"⚠️ Skipping preassigned WR for {resident}: role '{role}' not in roles list.")
                 continue
 
-            print("===============================")
-            print(type(date))
-            # Fix the assignment 
+            # Force assignment
             model.Add(assign[(date, role, resident)] == 1)
 
             # Prevent anyone else from taking that same date-role
             for (d, r, other) in assign.keys():
                 if d == date and r == role and other != resident:
                     model.Add(assign[(d, r, other)] == 0)
-    
+
+    # --- STEP 2: Assign seniors to EW Day ---
     if resident_year == "seniors":
-        # Iterate through each weekend round assignment
         for _, row in weekend_rounds_df.iterrows():
             resident = row["name"].strip()
-            date = row["date"]
-            
-            
-            # Enforce that the resident is assigned to 'EW Day' on this date
-            if "ew day" in roles:
-                model.Add(assign[(date, "ew day", resident)] == 1)
-            else:
-                # Defensive check: roles list must include 'EW Day'
+            date = pd.Timestamp(row["date"]).normalize()
+            role = "ew day"
+
+            if role not in roles:
                 raise ValueError("role 'ew day' not found in roles list.")
+
+            # Remove blackout/grayout conflicts for senior
+            for coll, coll_name in [(combined_blackout_dict, "blackout"), (soft_grayouts, "soft grayout")]:
+                if coll is None:
+                    continue
+                if isinstance(coll, pd.DataFrame):
+                    mask = ~((coll["name"].str.strip() == resident) & (coll["date"] == date))
+                    removed = len(coll) - mask.sum()
+                    coll[:] = coll.loc[mask]
+                    if removed > 0:
+                        print(f"🟢 Removed {coll_name} for {resident} on {date.date()} (senior EW assignment)")
+                elif isinstance(coll, dict) and resident in coll:
+                    before_len = len(coll[resident])
+                    coll[resident] = [d for d in coll[resident] if pd.to_datetime(d).normalize() != date]
+                    after_len = len(coll[resident])
+                    if before_len != after_len:
+                        print(f"🟢 Removed {coll_name} (dict) for {resident} on {date.date()} (senior EW assignment)")
+
+            # Force assignment
+            model.Add(assign[(date, role, resident)] == 1)
+
+            # Prevent anyone else from taking that same date-role
+            for (d, r, other) in assign.keys():
+                if d == date and r == role and other != resident:
+                    model.Add(assign[(d, r, other)] == 0)
         
 def build_weekend_round_assignments(residents_df, start_date, resident_year, r2_cover):
     """
@@ -97,8 +121,9 @@ def build_weekend_round_assignments(residents_df, start_date, resident_year, r2_
     # --- Collect all valid date ranges per resident ---
     all_ranges = []  # list of (resident_name, [dates in one range])
     for _, row in residents_df.iterrows():
-        resident_name = row["name"].strip()
-        wr_field = str(row.get("weekend round", "")).strip().lower()
+        if row["name"] is not None:
+            resident_name = row["name"].strip()
+            wr_field = str(row.get("weekend round", "")).strip().lower()
 
         if not wr_field or wr_field == "no":
             continue
@@ -183,13 +208,49 @@ def add_wr_soft_constraints(model, assign, days, roles, weekend_rounds_df, weeke
                             model.Add(penalty_var == var)
                             penalties.append(penalty_var)
 
-                # Case 2: Thursdays only
-                if d.strftime("%a") == "Thu":
-                    for role in roles:
-                        if (d, role, resident) in assign:
-                            var = assign[(d, role, resident)]
-                            penalty_var = model.NewIntVar(0, 1, f"thu_penalty_{resident}_{d}_{role}")
-                            model.Add(penalty_var == var)
-                            penalties.append(penalty_var)
-
     return penalties
+
+def add_wr_hard_constraints(
+    model,
+    assign,
+    days,
+    roles,
+    preassigned_wr_df,
+    weekend_days
+):
+    """
+    HARD CONSTRAINT:
+    - Always forbid weekend assignments (Fri/Sat)
+    - EXCEPT:
+        If a (resident, date, role) is preassigned as WR,
+        that exact assignment is allowed.
+    """
+
+    # Build allowed WR assignments (exceptions)
+    allowed_wr = set()
+
+    if preassigned_wr_df is not None and not preassigned_wr_df.empty:
+        wr_df = preassigned_wr_df.copy()
+        wr_df["date"] = pd.to_datetime(wr_df["date"]).dt.date
+
+        # Expecting columns: name, date, role
+        allowed_wr = {
+            (row.date, row.role, row.name)
+            for row in wr_df.itertuples(index=False)
+        }
+
+    # Enforce hard constraint
+    for d in days:
+        d_date = pd.to_datetime(d).date()
+
+        if d_date in weekend_days:  # Fri / Sat
+            for role in roles:
+                for resident in {r for (_, _, r) in assign.keys()}:
+                    key = (d, role, resident)
+                    if key not in assign:
+                        continue
+
+                    # Allow only explicitly preassigned WR
+                    if (d_date, role, resident) not in allowed_wr:
+                        model.Add(assign[key] == 0)
+

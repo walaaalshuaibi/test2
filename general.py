@@ -36,18 +36,30 @@ def add_basic_constraints(model, assign, days, roles, residents):
 # ------------------------- 
 # Hard Constraints 
 # -------------------------
-def add_blackout_constraints(model, assign, roles, blackout_dict):
-    """ 
-    Prevent residents from being scheduled on blackout dates. 
-    Args: 
-        blackout_dict (dict): {resident: set of blackout dates} 
+def add_blackout_constraints(model, assign, roles, combined_blackout_df, soft_grayouts):
     """
+    HARD constraint: resident cannot be assigned on blackout or grayout dates.
     
-    for resident, blackout_days in blackout_dict.items():
-        for day in blackout_days:
+    Args:
+        model: OR-Tools model
+        assign: dict {(day, role, resident): variable}
+        roles: list of roles per day
+        blackout: dict {resident: set of hard blackout dates}
+        grayout: dict {resident: set of grayout (buffer) dates, also hard}
+    """
+    # Merge both into a single dict to simplify
+    combined = {}
+    for src in (combined_blackout_df, soft_grayouts):
+        for resident, dates in src.items():
+            combined.setdefault(resident, set()).update(dates)
+
+    # Apply hard constraints
+    for resident, blocked_days in combined.items():
+        for day in blocked_days:
             for role in roles:
-                if (day, role, resident) in assign:
-                    model.Add(assign[(day, role, resident)] == 0)
+                key = (day, role, resident)
+                if key in assign:
+                    model.Add(assign[key] == 0)
 
 def add_shift_cap_constraints(
     model, assign, days, roles, residents, 
@@ -62,52 +74,56 @@ def add_shift_cap_constraints(
     
     for r in residents:
         total_shifts = sum(assign[(d, role, r)] for d in days for role in roles)
-        weekend_shifts = sum(assign[(d, role, r)] for d in weekend_days for role in roles)
+        #weekend_shifts = sum(assign[(d, role, r)] for d in weekend_days for role in roles)
         
         # --- Minimums ---
-        model.Add(total_shifts >= 0) 
-        model.Add(score_vars[r] >= 0)  
+        model.Add(total_shifts > 0) 
+        model.Add(score_vars[r] > 0)  
         
         # --- Maximums ---
         model.Add(total_shifts <= max_shifts[r])
         model.Add(score_vars[r] <= max_points[r])
-        model.Add(weekend_shifts <= weekend_limits[r])
+        #model.Add(weekend_shifts <= weekend_limits[r])
 
 def no_consecutive_weekends_constraint(model, assign, days, roles, residents):
     """
     Hard constraint:
-    - If a resident works a Friday, they cannot work the following Fri or Sat
-    - If a resident works a Saturday, they cannot work the following Fri or Sat
+    Prevent residents from being assigned to two consecutive weekends (Fri+Sat of consecutive ISO weeks).
     """
 
-    days_set = set(days)
+    # Group weekend days by ISO week
+    weekend_by_week = {}
+    for d in days:
+        if d.strftime('%a') in ['Fri', 'Sat']:
+            week = d.isocalendar()[1]  # ISO week number
+            weekend_by_week.setdefault(week, []).append(d)
+
+    sorted_weeks = sorted(weekend_by_week.keys())
 
     for r in residents:
-        for d in days:
-            dow = d.strftime("%a")
+        # --- Build weekend flags per week ---
+        weekend_flags = {}
+        for w in sorted_weeks:
+            wknd_vars = [assign[(d, role, r)]
+                         for d in weekend_by_week[w]
+                         for role in roles
+                         if (d, role, r) in assign]
 
-            if dow not in ["Fri", "Sat"]:
-                continue
+            if wknd_vars:
+                flag = model.NewBoolVar(f"{r}_wknd_{w}_worked")
+                model.AddMaxEquality(flag, wknd_vars)
+                weekend_flags[w] = flag
+            else:
+                # No possible assignments → force flag = 0
+                flag = model.NewBoolVar(f"{r}_wknd_{w}_worked")
+                model.Add(flag == 0)
+                weekend_flags[w] = flag
 
-            # Determine which future days to block
-            if dow == "Fri":
-                blocked_days = [d + pd.Timedelta(days=7), d + pd.Timedelta(days=8)]
-            else:  # Saturday
-                blocked_days = [d + pd.Timedelta(days=6), d + pd.Timedelta(days=7)]
-
-            for role in roles:
-                if (d, role, r) not in assign:
-                    continue
-
-                for bd in blocked_days:
-                    if bd not in days_set:
-                        continue
-
-                    for role2 in roles:
-                        if (bd, role2, r) in assign:
-                            # If assigned on this Fri/Sat → forbid next weekend
-                            model.Add(assign[(bd, role2, r)] == 0)\
-                                 .OnlyEnforceIf(assign[(d, role, r)])
+        # --- Add consecutive weekend constraints ---
+        for i in range(len(sorted_weeks) - 1):
+            w1, w2 = sorted_weeks[i], sorted_weeks[i + 1]
+            # Cannot work both consecutive weekends
+            model.Add(weekend_flags[w1] + weekend_flags[w2] <= 1)
                     
 def add_cooldown_constraints(model, assign, days, roles, residents, cooldown=3):
     """
@@ -185,7 +201,7 @@ def add_no_thursday_after_weekend_constraint(model, assign, days, roles, residen
                     model.Add(assign[key] == 0).OnlyEnforceIf(exceeds_two)
 
 # ------------------------- 
-# Soft Constraints 
+# Optional Constraints 
 # -------------------------
 def add_limited_shifts_constraint(model, assign, days, roles, limit_dict, max_shifts):
     """ 
@@ -220,21 +236,38 @@ def add_off_days_constraint(model, assign, roles, off_days):
             if (d, role, r) in assign:
                 model.Add(assign[(d, role, r)] == 0)
 
-def add_on_days_constraint(model, assign, roles, on_days):
+def add_on_days_constraint(model, assign, roles, on_days, grayouts):
     """ 
-    Add constraints to force residents to be scheduled on specific days. 
-    """
+    Add constraints to force residents to be scheduled on specific days,
+    but override if the date is grayed out and print a warning.
     
+    Args:
+        model: CpModel
+        assign: dict of assign[(date, role, resident)] variables
+        roles: list of roles
+        on_days: DataFrame with columns ["name", "date"]
+        grayouts: DataFrame or dict with dates/residents that are normally blocked
+    """
     for _, row in on_days.iterrows():
         r, d = row["name"], row["date"]
+
+        # Check if this resident/date is grayed out
+        is_grayed = False
+        if grayouts is not None:
+            if isinstance(grayouts, dict):
+                # dict format: {resident: set(dates)}
+                is_grayed = r in grayouts and d in grayouts[r]
+            elif isinstance(grayouts, pd.DataFrame):
+                is_grayed = ((grayouts["name"] == r) & (grayouts["date"] == d)).any()
+
+        if is_grayed:
+            print(f"⚠️ Override grayout: assigning {r} on grayed out date {d}")
         
         # Resident must be assigned to exactly one role on this date
         model.Add(sum(assign[(d, role, r)] for role in roles) == 1)
 
-
-
 # ------------------------- 
-# Penalty
+# Soft Constraints (Penalty)
 # -------------------------
 def add_score_balance_soft_penalties(model, score_vars, residents, max_points, threshold=1):
     penalties = []
@@ -336,49 +369,70 @@ def hard_days_balance_and_diversity_penalty(model, assign, days, roles, resident
 
     return balance_penalties, diversity_penalties
 
-def balanced_rotation_penalty(model, assign, days, roles, residents):
+def balanced_rotation_penalty(model, assign, days, roles, residents, ns_residents=None):
     """
     Soft constraint: penalize imbalance in role distribution.
+    Includes NS residents, normalizing their roles to match regular roles.
     """
     penalties = []
 
+    # --- Prepare NS roles mapping ---
+    ns_roles_map = {}
+    if ns_residents is not None:
+        for _, row in ns_residents.iterrows():
+            ns_name = row["name"]
+            ns_role_raw = row["role"]
+
+            # Normalize NS role: replace ' night' with ' day'
+            ns_role = ns_role_raw.replace(" night", " day")
+            ns_roles_map.setdefault(ns_name, []).append(ns_role)
+
+    # --- Loop over residents ---
     for r in residents:
-        # Count shifts per role
         role_counts = {}
+
         for role in roles:
-            role_counts[role] = model.NewIntVar(0, len(days), f"{r}_{role}_count")
-            model.Add(role_counts[role] == sum(assign[(d, role, r)] for d in days))
+            # Count assignments for this role
+            count_expr = sum(assign[(d, role, r)] for d in days)
+
+            # Add NS roles if this resident is in ns_residents
+            if ns_residents is not None and r in ns_roles_map:
+                for ns_role in ns_roles_map[r]:
+                    # Match base role ignoring suffix
+                    if ns_role.split()[0] == role.split()[0]:
+                        count_expr += 1  # Add 1 for the NS extra role
+
+            # Create IntVar and add constraint
+            role_counts[role] = model.NewIntVar(0, len(days) + 1, f"{r}_{role}_count")
+            model.Add(role_counts[role] == count_expr)
+
+            # Print for debugging
+            #print(f"Resident: {r}, Role: {role}, CountVar: {role_counts[role]}, NS roles: {ns_roles_map.get(r, [])}")
 
         # Penalize differences greater than 1
-        for i, role in enumerate(roles):
-            for j, other_role in enumerate(roles):
+        for i, role1 in enumerate(roles):
+            for j, role2 in enumerate(roles):
                 if j <= i:
                     continue
 
-                # Difference between two role counts
-                diff = model.NewIntVar(-len(days), len(days), f"{r}_diff_{role}_{other_role}")
-                model.Add(diff == role_counts[role] - role_counts[other_role])
+                diff = model.NewIntVar(-len(days)-1, len(days)+1, f"{r}_diff_{role1}_{role2}")
+                model.Add(diff == role_counts[role1] - role_counts[role2])
 
-                # Absolute difference
-                abs_diff = model.NewIntVar(0, len(days), f"{r}_absdiff_{role}_{other_role}")
+                abs_diff = model.NewIntVar(0, len(days)+1, f"{r}_absdiff_{role1}_{role2}")
                 model.Add(abs_diff >= diff)
                 model.Add(abs_diff >= -diff)
 
-                # Excess beyond ±1 tolerance
-                excess = model.NewIntVar(0, len(days), f"{r}_excess_{role}_{other_role}")
-
-                # Boolean: imbalance exceeds 1
-                imbalance = model.NewBoolVar(f"{r}_imbalance_{role}_{other_role}")
+                imbalance = model.NewBoolVar(f"{r}_imbalance_{role1}_{role2}")
                 model.Add(abs_diff > 1).OnlyEnforceIf(imbalance)
                 model.Add(abs_diff <= 1).OnlyEnforceIf(imbalance.Not())
 
-                # Link excess to imbalance
+                excess = model.NewIntVar(0, len(days)+1, f"{r}_excess_{role1}_{role2}")
                 model.Add(excess == abs_diff - 1).OnlyEnforceIf(imbalance)
                 model.Add(excess == 0).OnlyEnforceIf(imbalance.Not())
 
                 penalties.append(excess)
 
-    return penalties
+    return penalties 
 
 def add_role_preferences_by_level(model, assign, roles, days, residents, resident_levels, nf_residents):
 
@@ -386,7 +440,7 @@ def add_role_preferences_by_level(model, assign, roles, days, residents, residen
 
     # Preferred weekend roles
     preferred = {
-        "r4": ["er-2 day"],
+        "r4": ["er-2 day","ew day"],
         "r3": ["er-1 day","ew day"]
     }
 
@@ -428,17 +482,21 @@ def add_minimum_spacing_soft_constraint(
     sorted_days = sorted(days)
 
     for r in residents:
-        # 1) Fixed preassigned dates for this resident
-        fixed_dates = sorted(fixed_preassigned.get(r, []))
+        # Fixed preassigned dates for this resident
+        fixed_dates = set(fixed_preassigned.get(r, []))
 
         # -----------------------------------------------------------
         # A) Spacing between one solver date and one fixed date
         # -----------------------------------------------------------
         for d in sorted_days:
+
+            # 👉 NEW: if this day is itself preassigned, skip
+            if d in fixed_dates:
+                continue
+
             for fd in fixed_dates:
                 gap = abs((d - fd).days)
                 if gap < min_gap:
-                    # All roles that could assign this resident on day d
                     assign_vars = [
                         assign[(d, role, r)]
                         for role in roles
@@ -447,10 +505,13 @@ def add_minimum_spacing_soft_constraint(
                     if not assign_vars:
                         continue
 
-                    # If ANY role assigns them on this day → violation
-                    assigned_today = model.NewBoolVar(f"{r}_{d}_close_to_fixed")
+                    assigned_today = model.NewBoolVar(
+                        f"{r}_{d}_close_to_fixed"
+                    )
                     model.AddBoolOr(assign_vars).OnlyEnforceIf(assigned_today)
-                    model.Add(sum(assign_vars) == 0).OnlyEnforceIf(assigned_today.Not())
+                    model.Add(sum(assign_vars) == 0).OnlyEnforceIf(
+                        assigned_today.Not()
+                    )
 
                     penalties.append(assigned_today)
 
@@ -458,13 +519,16 @@ def add_minimum_spacing_soft_constraint(
         # B) Spacing between solver-assigned days
         # -----------------------------------------------------------
         for i in range(len(sorted_days)):
-            for j in range(i+1, len(sorted_days)):
+            for j in range(i + 1, len(sorted_days)):
                 d1 = sorted_days[i]
                 d2 = sorted_days[j]
 
+                # 👉 NEW: if either day is preassigned, skip
+                if d1 in fixed_dates or d2 in fixed_dates:
+                    continue
+
                 gap = (d2 - d1).days
                 if gap < min_gap:
-                    # Collect vars for each day
                     vars_d1 = [
                         assign[(d1, role, r)]
                         for role in roles
@@ -488,14 +552,17 @@ def add_minimum_spacing_soft_constraint(
                     model.AddBoolOr(vars_d2).OnlyEnforceIf(any_d2)
                     model.Add(sum(vars_d2) == 0).OnlyEnforceIf(any_d2.Not())
 
-                    violation = model.NewBoolVar(f"gap_violation_{r}_{d1}_{d2}")
+                    violation = model.NewBoolVar(
+                        f"gap_violation_{r}_{d1}_{d2}"
+                    )
                     model.AddBoolAnd([any_d1, any_d2]).OnlyEnforceIf(violation)
-                    model.AddBoolOr([any_d1.Not(), any_d2.Not()]).OnlyEnforceIf(violation.Not())
+                    model.AddBoolOr(
+                        [any_d1.Not(), any_d2.Not()]
+                    ).OnlyEnforceIf(violation.Not())
 
                     penalties.append(violation)
 
     return penalties
-
 
 def consecutive_hard_days_penalty(model, assign, days, roles, residents, weekend_days, threshold=2):
     """
@@ -736,5 +803,30 @@ def hard_days_max_penalty(model, assign, days, roles, residents, max_hard=3):
 
     return penalties
 
+def hard_day_penalty(model, assign, days, roles, residents, hard_days):
+    """
+    Soft constraint: Penalize residents if assigned more than once on hard days.
+    """
+    penalties = []
 
+    hard_day_filtered = [d for d in days if d.strftime('%a') in hard_days]
 
+    for r in residents:
+        flags = [
+            assign[(d, role, r)]
+            for d in hard_day_filtered
+            for role in roles
+            if (d, role, r) in assign
+        ]
+
+        if flags:
+            hard_day_count = model.NewIntVar(0, len(flags), f"{r}_hard_day_count")
+            model.Add(hard_day_count == sum(flags))
+
+            over = model.NewBoolVar(f"{r}_hard_day_over")
+            model.Add(hard_day_count > 1).OnlyEnforceIf(over)
+            model.Add(hard_day_count <= 1).OnlyEnforceIf(over.Not())
+
+            penalties.append(over)
+
+    return penalties

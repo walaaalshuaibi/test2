@@ -1,7 +1,11 @@
 from datetime import datetime, timedelta
 import re
+from openpyxl import load_workbook
 import pandas as pd
 import random
+
+def base_role(role_name):
+        return role_name.split(" ")[0] 
 
 def resident_score_expr(assign, days, day_roles, resident, weekend_days, weekend_rounds_df, ns_residents_df):
     """
@@ -182,8 +186,6 @@ def expand_dates(date_range_str, base_year, anchor_month=None):
 
     return dates_out
 
-
-
 def calculate_max_limits(residents, nf_residents, resident_max_limit, nf_max_limit, night_counts):
     """
     Calculate maximum shifts, points, and weekend limits for each resident.
@@ -342,4 +344,38 @@ def get_all_assigned_dates(
     # ----------------------------------------------------
     return sorted(all_dates)
 
+def read_excel_as_displayed(path, sheet_name=0):
+    wb = load_workbook(path, data_only=True)
+    ws = wb.worksheets[sheet_name] if isinstance(sheet_name, int) else wb[sheet_name]
 
+    headers = [cell.value for cell in ws[1]]
+    data = []
+
+    for row in ws.iter_rows(min_row=2):
+        row_data = {}
+        for h, cell in zip(headers, row):
+            if cell.is_date and cell.value is not None:
+                # Format all Excel dates as '23 Nov'
+                value = cell.value.strftime("%d %b")
+            else:
+                value = cell.value
+            row_data[h] = value
+        data.append(row_data)
+
+    return pd.DataFrame(data)
+
+# DEBUG
+def assert_penalties(name, penalties):
+    if penalties is None:
+        raise ValueError(f"{name} returned None")
+    if not isinstance(penalties, list):
+        raise TypeError(f"{name} returned {type(penalties)}")
+    for p in penalties:
+        if not hasattr(p, "Proto"):
+            raise TypeError(f"{name} contains non-var: {p}")
+
+    print(f"✅ {name}: {len(penalties)} penalties")
+
+def debug_penalties(name, penalties):
+    bad = [p for p in penalties if p is None]
+    print(f"{name}: {len(penalties)} penalties, {len(bad)} None values")

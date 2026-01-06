@@ -68,7 +68,7 @@ with tab1:
 
     residents_file = st.file_uploader("Upload Residents Excel", type=["xlsx"])
     if residents_file:
-        st.session_state["residents_df"] = pd.read_excel(residents_file)
+        st.session_state["residents_df"] = helper.read_excel_as_displayed(residents_file)
         st.success("✅ Residents file uploaded successfully!")
 
     if not st.session_state["residents_df"].empty:
@@ -384,8 +384,7 @@ with tab2:
                     if st.button("Add WR Preassignment", key="add_wr_preassign"):
                         new_row = pd.DataFrame([[wr_name, selected_date, wr_role]], columns=["name", "date", "role"])
                         st.session_state["preassigned_wr"] = pd.concat(
-                            [st.session_state["preassigned_wr"], new_row], ignore_index=True
-                        )
+                            [st.session_state["preassigned_wr"], new_row], ignore_index=True)
 
         # Display WR table with delete buttons
         if resident_year == "r1" and not st.session_state["preassigned_wr"].empty:
@@ -435,7 +434,7 @@ with tab2:
                     try:
                         limited_shift_residents, off_days, on_days = build_constraints_from_session()
 
-                        schedule_df, scores_df = schedule_with_ortools_full_modular(
+                        scheduler_result = schedule_with_ortools_full_modular(
                             st.session_state["residents_df"],
                             start_date,
                             num_weeks,
@@ -450,6 +449,11 @@ with tab2:
                             preassigned_ns_df=preassigned_ns_df,
                             preassigned_wr_df=preassigned_wr_df
                         )
+
+                        if scheduler_result is None:
+                            raise RuntimeError("No feasible solution found")
+                        
+                        schedule_df, scores_df = scheduler_result
 
                         st.session_state["schedule_df"] = schedule_df
                         st.session_state["scores_df"] = scores_df

@@ -1,21 +1,19 @@
 import pandas as pd
 import random
 import blackout
-import helper
+import streamlit as st
 
 def fill_ns_cells(
-    resident_year,
-    non_nf_residents,
-    nf_residents,
-    nf_max_limit,
-    nf_calendar_df,
-    wr_residents,
-    resident_level,
-    blackout_df=None,
-    nf_cols=None,
-    nf_blackout_lookup=None,
-    preassigned_ns_df=None
-):
+        resident_year,
+        non_nf_residents, 
+        nf_residents,
+        nf_calendar_df, 
+        wr_residents, 
+        resident_level, 
+        blackout_df, 
+        soft_grayouts,
+        nf_cols,
+        preassigned_ns_df=None):
     """ 
     Fill empty NF cells in the calendar with unused residents, ensuring they are not on vacation or blackout on that date.
     """
@@ -24,11 +22,8 @@ def fill_ns_cells(
         nf_cols = ["NF1", "NF2", "NF3"]
 
     # Step 1: Build resident pool
-    available_residents = [r for r in non_nf_residents if r not in wr_residents]
+    available_residents = [r for r in non_nf_residents if r not in set(wr_residents["name"])]
     random.shuffle(available_residents)
-
-    # Step 2: Build blackout lookup
-    blackout_lookup = blackout.build_blackout_lookup(blackout_df) if blackout_df is not None else {}
 
     ns_records = []
     nf_assigned = set()
@@ -58,8 +53,8 @@ def fill_ns_cells(
             resident = row["name"].strip()
             role = row["role"].strip().lower()
 
-            if date in blackout_lookup.get(resident, set()):
-                print(f"⚠️ Skipping {resident} on {date.date()} — blackout conflict")
+            if date in blackout_df.get(resident, set()):
+                st.warning(f"⚠️ Skipping {resident} on {date.date()} — blackout conflict")
                 continue
 
             mask = pd.to_datetime(nf_calendar_df["date"]) == date
@@ -67,7 +62,7 @@ def fill_ns_cells(
                 idx = nf_calendar_df.index[mask][0]
                 nf_calendar_df.at[idx, role] = resident
                 ns_records.append({"date": date, "name": resident, "role": role})
-                blackout.update_blackout(resident, [date], blackout_lookup)
+                blackout.update_blackout(resident, [date], blackout_df)
                 if resident in available_residents:
                     available_residents.remove(resident)
 
@@ -77,19 +72,17 @@ def fill_ns_cells(
             if val == "" and available_residents:
                 date = pd.to_datetime(nf_calendar_df.at[idx, "date"])
 
-                candidates = [r for r in available_residents if date not in blackout_lookup.get(r, set())]
+                candidates = [r for r in available_residents if date not in blackout_df.get(r, set())]
                 if not candidates:
-                    print(f"⚠️ No available residents for {date.date()} in {col} (all blacked out)")
+                    st.warning(f"⚠️ No available residents for {date.date()} in {col} (all blacked out)")
                     continue
 
                 if resident_year == "r1":
-                    print("started r1 ns.....")
                     assigned = assign_ns_juniors(
-                        date, candidates, blackout_lookup, nf_assigned, nf_blackout_lookup, nf_calendar_df, sorted_juniors
-                    )                                
+                        date, candidates, blackout_df, nf_assigned, sorted_juniors)                                
                     
                 elif resident_year == "seniors":
-                    assigned = assign_ns_seniors(date, candidates, blackout_lookup, resident_level, col)
+                    assigned = assign_ns_seniors(date, candidates, blackout_df, soft_grayouts, resident_level, col)
 
                 else:
                     assigned = None
@@ -98,17 +91,17 @@ def fill_ns_cells(
                     resident = assigned
                     nf_calendar_df.at[idx, col] = resident
                     ns_records.append({"date": date, "name": resident, "role": col})
-                    blackout.update_blackout(resident, [date], blackout_lookup)
+                    blackout.update_blackout(resident, [date], blackout_df)
                     if resident in available_residents:
                         available_residents.remove(resident)
 
-                    assigned_blackouts = blackout_lookup.get(assigned, set())
+                    assigned_blackouts = blackout_df.get(assigned, set())
                     print(f"{assigned} blackout dates:", sorted(assigned_blackouts))
 
     ns_residents = pd.DataFrame(ns_records)
-    return nf_calendar_df, ns_residents, blackout_lookup
+    return nf_calendar_df, ns_residents, blackout_df
 
-def assign_ns_seniors(date, available_residents, blackout_lookup, resident_level, role):
+def assign_ns_seniors(date, available_residents, blackout_lookup, soft_grayouts, resident_level, role):
     """ 
     Assign one resident to NS slot on a given date, with weighted preference:
     - R4s more likely for ER1/ER2
@@ -116,7 +109,10 @@ def assign_ns_seniors(date, available_residents, blackout_lookup, resident_level
     """
     
     # Filter out blacked-out residents
-    candidates = [r for r in available_residents if (r, date) not in blackout_lookup]
+    candidates = [
+        r for r in available_residents
+        if date not in blackout_lookup.get(r, set())
+        and date not in soft_grayouts.get(r, set())]
     if not candidates:
         return None
     
@@ -147,7 +143,7 @@ def assign_ns_seniors(date, available_residents, blackout_lookup, resident_level
 
     return chosen
 
-def assign_ns_juniors(date, candidates, blackout_lookup, nf_assigned, nf_blackout_lookup, nf_calendar_df, sorted_residents):
+def assign_ns_juniors(date, candidates, blackout_lookup, nf_assigned, sorted_residents):
     """
     Assign NS (Thursday night) for juniors based on precomputed NF blocks
     """
@@ -174,16 +170,14 @@ def assign_ns_juniors(date, candidates, blackout_lookup, nf_assigned, nf_blackou
 
         matches_target = ns_candidate.date() == date.date()
         blackout_conflict = date in blackout_lookup.get(name, set())
-        nf_block_conflict = nf_blackout_lookup and (date in nf_blackout_lookup.get(name, set()))
 
         print(f"Resident: '{name}' | NF days: {(nf_end - nf_start).days + 1} | "
               f"already_assigned: {already_assigned}")
         print(f"  NF start={nf_start.date()}, NF end={nf_end.date()} | "
               f"Half: {half_label} -> ns_candidate={ns_candidate.date()} | "
-              f"matches_target={matches_target} | blackout={blackout_conflict} | "
-              f"nf_block_blackout={nf_block_conflict}")
+              f"matches_target={matches_target} | blackout={blackout_conflict} | ")
 
-        if matches_target and not blackout_conflict and not nf_block_conflict:
+        if matches_target and not blackout_conflict:
             nf_assigned.add(name)
             print(f"  ✅ Assigned NS to '{name}' on {date.date()}")
             return name
@@ -197,28 +191,24 @@ def assign_ns_juniors(date, candidates, blackout_lookup, nf_assigned, nf_blackou
     print(f"  ⚠️ No NS assignment found for {date.date()}")
     return None
 
-def night_thursday_penalty(model, assign, days, roles, ns_residents):
+def night_thursday_hard_constraint(model, assign, days, roles, ns_residents):
     """
-    Penalize night shifters if they are assigned too many Thursdays.
-    Returns a list of penalty variables.
+    Hard constraint: Night shifters can be assigned to at most 1 Thursday.
     """
-    penalties = []
 
     # Filter Thursdays
     thursdays = [d for d in days if d.strftime('%a') == 'Thu']
 
     for r in ns_residents:
-        # Count total assignments on Thursdays
-        flags = [assign[(d, role, r)] for d in thursdays for role in roles if (d, role, r) in assign]
+        # All Thursday assignments for this resident
+        flags = [
+            assign[(d, role, r)]
+            for d in thursdays
+            for role in roles
+            if (d, role, r) in assign
+        ]
+
         if flags:
-            thursday_count = model.NewIntVar(0, len(flags), f"{r}_thursday_count")
-            model.Add(thursday_count == sum(flags))
+            # HARD constraint: at most 1 Thursday
+            model.Add(sum(flags) <= 1)
 
-            # Penalize if assigned more than 1 Thursday
-            over = model.NewBoolVar(f"{r}_thursday_over")
-            model.Add(thursday_count > 1).OnlyEnforceIf(over)
-            model.Add(thursday_count <= 1).OnlyEnforceIf(over.Not())
-
-            penalties.append(over)
-
-    return penalties

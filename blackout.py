@@ -1,223 +1,284 @@
 import pandas as pd
 import wr
 import helper
-import blackout
+from datetime import timedelta
 
-def prepare_blackout(buffers, residents_df, start_date, num_weeks, resident_year, r2_cover, on_days, off_days, residents):
+# ======================================================
+# MAIN ENTRY
+# ======================================================
 
-    NF_buffer, Vacation_buffer, WR_buffer, NS_buffer = buffers
+def prepare_blackouts_and_grayouts(
+    buffers,
+    residents_df,
+    start_date,
+    num_weeks,
+    resident_year,
+    r2_cover,
+    on_days,
+    off_days,
+    residents
+):
 
-    nf_blackout, night_counts = blackout.nf_blackout_section(residents_df, start_date, num_weeks, NF_buffer) if NF_buffer is not None else ({}, {})
-    vacation_blackout, vacation_records = blackout.vacation_blackout_section(residents_df, start_date, Vacation_buffer) if Vacation_buffer is not None else ({}, [])
-    wr_blackout, weekend_rounds_records = blackout.wr_blackout_section(residents_df, start_date, WR_buffer, resident_year, r2_cover=r2_cover) if WR_buffer is not None else ({}, [])
-    on_blackout, off_blackout = blackout.on_off_blackout_section(on_days, off_days) if (on_days is not None or off_days is not None) else ({}, {})
+    NF_buffer, Vacation_buffer, WR_buffer, _ = buffers
 
-    vacation_df = pd.DataFrame(vacation_records)
-    weekend_rounds_df = pd.DataFrame(weekend_rounds_records)
-    wr_residents = set(weekend_rounds_df["name"]) if not weekend_rounds_df.empty else set()
-
-    nf_residents = {r for r, c in night_counts.items() if c > 2}
-    non_nf_residents = set(residents) - nf_residents
-
-    combined_blackout_dict, combined_blackout_df = blackout.build_combined_blackout_df(
-    nf_blackout,wr_blackout,vacation_blackout,on_blackout,off_blackout, wr_records=weekend_rounds_records, resident_year=resident_year)
-
-    nf_blackout_lookup = {(r, d): True for r, dates in nf_blackout.items() for d in dates}
-
-    return (non_nf_residents, nf_residents, wr_residents, nf_blackout_lookup, combined_blackout_df, combined_blackout_dict, night_counts
-            , weekend_rounds_df, vacation_df)
-
-def update_blackout(resident, dates, blackout_dict, buffer_days=0, record_list=None):
-    """ 
-    Adds blackout dates for a resident with optional buffer and exclusions. 
-    Args:
-        resident (str): Resident name.
-        dates (list): List of central dates.
-        blackout_dict (dict): Dict to update.
-        buffer_days (int): Days before/after each date to include.
-        record_list (list): Optional list to append blackout records.
-    """
-    
-    for d in dates:
-        if buffer_days > 0:
-            blackout_range = pd.date_range(d - pd.Timedelta(days=buffer_days), d + pd.Timedelta(days=buffer_days))
-        else:
-            blackout_range = pd.DatetimeIndex([d])
-        
-        blackout_dict.setdefault(resident, set()).update(blackout_range)
-        
-        if record_list is not None:
-            record_list.append({"name": resident, "date": d})
-
-def build_combined_blackout_df(*blackout_dicts, wr_records=None, resident_year):
-    combined = {}
-    for bd in blackout_dicts:
-        for r, dates in bd.items():
-            combined.setdefault(r, set()).update(dates)
-
-    if resident_year == "seniors":
-        # 🔑 Remove WR dates from all blackout sets if wr_records provided
-        if wr_records:
-            for rec in wr_records:
-                resident = rec["name"]
-                wr_date = pd.to_datetime(rec["date"])
-                if resident in combined:
-                    combined[resident].discard(wr_date)
-
-    # Also build a DataFrame for optional analysis/export
-    combined_df = pd.DataFrame(
-        [{"name": r, "date": d} for r, dates in combined.items() for d in dates]
+    # ---------------- NF ----------------
+    nf_blackout, nf_grayout, night_counts = (
+        nf_blackout_section(residents_df, start_date, num_weeks, NF_buffer)
+        if NF_buffer is not None else ({}, {}, {})
     )
 
-    return combined, combined_df
+    # ---------------- Vacation ----------------
+    vacation_blackout, vacation_grayout = (
+        vacation_blackout_section(residents_df, start_date, Vacation_buffer)
+        if Vacation_buffer is not None else ({}, {})
+    )
 
-def build_blackout_lookup(blackout_df):
-    blackout_dict = {}
-    for _, row in blackout_df.iterrows():
-        resident = row["name"]
-        date = pd.to_datetime(row["date"])
-        blackout_dict.setdefault(resident, set()).add(date)
-    return blackout_dict
+    # ---------------- WR ----------------
+    wr_blackout, wr_grayout, wr_records = (
+        wr_blackout_section(
+            residents_df, start_date, WR_buffer, resident_year, r2_cover
+        ) if WR_buffer is not None else ({}, {}, [])
+    )
+
+    # ---------------- ON / OFF ----------------
+    # FIX: ADD GRAYOUT FOR OFF
+    on_blackout, on_grayout, off_blackout = on_off_blackout_section(on_days, off_days)
+
+    # ================= COMBINE =================
+
+    hard_blackouts = combine_dicts(
+        nf_blackout,
+        vacation_blackout,
+        wr_blackout,
+        off_blackout
+    )
+
+    soft_grayouts = combine_dicts(
+        nf_grayout,
+        vacation_grayout,
+        wr_grayout,
+        on_grayout
+    )
+
+    # 🔒 HARD ALWAYS WINS
+    soft_grayouts = remove_soft_conflicts(soft_grayouts, hard_blackouts)
+
+    # ================= OUTPUT =================
+
+    wr_residents = pd.DataFrame(wr_records) # df
+    nf_residents = {r for r, c in night_counts.items() if c > 2} # set 
+    non_nf_residents = set(residents) - nf_residents # set
+
+    return {
+        "blackouts": hard_blackouts,
+        "grayouts": soft_grayouts,
+        "blackout_df": dict_to_df(hard_blackouts),
+        "grayout_df": dict_to_df(soft_grayouts),
+        "night_counts": night_counts,
+        "wr_residents": wr_residents,
+        "nf_residents": nf_residents,
+        "non_nf_residents": non_nf_residents,
+    }
+
+# ======================================================
+# NF
+# ======================================================
 
 def nf_blackout_section(residents_df, start_date, num_weeks, NF_buffer):
-    from datetime import timedelta
 
-    # Calculate the end of the schedule
     end_date = start_date + timedelta(weeks=num_weeks) - timedelta(days=1)
 
-    nf_blackout = {r["name"]: set() for _, r in residents_df.iterrows()}
-    night_counts = {r["name"]: 0 for _, r in residents_df.iterrows()}
+    nf_blackout = {}
+    nf_grayout = {}
+    night_counts = {}
 
     for _, row in residents_df.iterrows():
-        resident_name = row["name"]
-        nf_value = str(row.get("nf", "no")).strip()
+        name = row["name"]
+        nf_blackout[name] = set()
+        nf_grayout[name] = set()
+        night_counts[name] = 0
 
-        if nf_value.lower() == "no" or nf_value == "":
+        nf_value = str(row.get("nf", "")).strip()
+        if not nf_value or nf_value.lower() == "no":
             continue
 
         for rng in nf_value.split("\n"):
-
-            # Expand all NF dates from the input range
-            expanded = helper.expand_dates(
+            dates = helper.expand_dates(
                 rng,
                 base_year=start_date.year,
-                anchor_month=start_date.month
+                anchor_month=start_date.month,
             )
 
-            # 🔥 Keep only dates inside the scheduling window
-            valid_nf_days = [
-                d for d in expanded
-                if start_date <= d <= end_date
-            ]
+            valid = [d for d in dates if start_date <= d <= end_date]
+            night_counts[name] += len(valid)
 
-            # Count only valid dates
-            night_counts[resident_name] += len(valid_nf_days)
+            # 🔴 HARD NF
+            nf_blackout[name].update(valid)
 
-            # Apply blackout only on valid days
-            update_blackout(
-                resident_name,
-                valid_nf_days,
-                nf_blackout,
-                buffer_days=NF_buffer
-            )
+            # ⚪ SOFT buffer
+            for d in valid:
+                for i in range(1, NF_buffer + 1):
+                    for adj in (d - timedelta(days=i), d + timedelta(days=i)):
+                        if start_date <= adj <= end_date:
+                            nf_grayout[name].add(adj)
 
-    return nf_blackout, night_counts
+    return nf_blackout, nf_grayout, night_counts
 
+# ======================================================
+# VACATION
+# ======================================================
 
 def vacation_blackout_section(residents_df, start_date, Vacation_buffer):
-    vacation_blackout = {r["name"]: set() for _, r in residents_df.iterrows()}
-    vacation_records = []
+
+    hard = {}
+    soft = {}
 
     for _, row in residents_df.iterrows():
-        resident_name = row["name"]
+        name = row["name"]
+        hard[name] = set()
+        soft[name] = set()
 
-        if str(row.get("leave", "no")).strip().lower() != "no":
-            for rng in row["leave"].split("\n"):
-                dates = helper.expand_dates(rng, base_year=start_date.year, anchor_month=start_date.month)
-                if not dates:
-                    continue
+        leave = str(row.get("leave", "")).strip()
+        if not leave or leave.lower() == "no":
+            continue
 
-                buffer = Vacation_buffer if len(dates) == 5 else 0
-                update_blackout(
-                    resident_name,
-                    dates,
-                    vacation_blackout,
-                    buffer_days=buffer,
-                    record_list=vacation_records,
-                )
+        for rng in leave.split("\n"):
+            dates = helper.expand_dates(
+                rng,
+                base_year=start_date.year,
+                anchor_month=start_date.month,
+            )
 
-    return vacation_blackout, vacation_records
+            hard[name].update(dates)
 
+            if len(dates) == 5 and Vacation_buffer:
+                for d in dates:
+                    for i in range(1, Vacation_buffer + 1):
+                        soft[name].add(d - pd.Timedelta(days=i))
+                        soft[name].add(d + pd.Timedelta(days=i))
 
-def wr_blackout_section(residents_df, start_date, WR_buffer, resident_year,
-                        nf_blackout=None, vacation_blackout=None, r2_cover=None):
-    """
-    Wrapper that builds WR assignments and applies blackout rules.
-    Returns:
-      wr_blackout, weekend_rounds_records
-    """
-    wr_blackout = {r["name"]: set() for _, r in residents_df.iterrows()}
-    weekend_rounds_records = []
+    return hard, soft
 
-    # --- get assignments using your logic ---
-    assignments = wr.build_weekend_round_assignments(residents_df, start_date, resident_year, r2_cover)
+# ======================================================
+# WR
+# ======================================================
 
-    for resident_name, wr_date_ts in assignments:
-        blackout.update_blackout(
-            resident_name,
-            [wr_date_ts],
-            wr_blackout,
-            buffer_days=WR_buffer,
-            record_list=weekend_rounds_records,
-        )
+def wr_blackout_section(residents_df, start_date, WR_buffer, resident_year, r2_cover):
 
-    return wr_blackout, weekend_rounds_records
+    hard = {}
+    soft = {}
+    records = []
+
+    for _, r in residents_df.iterrows():
+        hard[r["name"]] = set()
+        soft[r["name"]] = set()
+
+    assignments = wr.build_weekend_round_assignments(
+        residents_df, start_date, resident_year, r2_cover
+    )
+
+    for name, wr_date in assignments:
+        hard[name].add(wr_date)
+        records.append({"name": name, "date": wr_date})
+
+        for i in range(1, WR_buffer + 1):
+            soft[name].add(wr_date - pd.Timedelta(days=i))
+            soft[name].add(wr_date + pd.Timedelta(days=i))
+
+    return hard, soft, records
+
+# ======================================================
+# ON / OFF
+# ======================================================
 
 def on_off_blackout_section(on_days=None, off_days=None):
-    """
-    Builds blackout dicts for on_days and off_days.
-    """
+
+    on_grayout = {}
     on_blackout = {}
     off_blackout = {}
 
     if on_days is not None and not on_days.empty:
         on_days["date"] = pd.to_datetime(on_days["date"])
         for _, row in on_days.iterrows():
-            resident, d = row["name"], row["date"]
-            blackout_dates = pd.date_range(d - pd.Timedelta(days=1), d + pd.Timedelta(days=1)).difference([d])
-            on_blackout.setdefault(resident, set()).update(blackout_dates)
+            name, d = row["name"], row["date"]
+            on_grayout.setdefault(name, set()).update(
+                pd.date_range(d - pd.Timedelta(days=1), d + pd.Timedelta(days=1)).difference([d])
+            )
 
     if off_days is not None and not off_days.empty:
         off_days["date"] = pd.to_datetime(off_days["date"])
         for _, row in off_days.iterrows():
-            resident, d = row["name"], row["date"]
-            off_blackout.setdefault(resident, set()).add(d)
+            off_blackout.setdefault(row["name"], set()).add(row["date"])
 
-    return on_blackout, off_blackout
+    return on_blackout, on_grayout, off_blackout
 
-def ns_blackout_section(residents, ns_residents, optional_rules, nf_calendar_df, buffers, combined_blackout_dict):
-    NS_buffer = buffers[3]
-    ns_blackout = {r: set() for r in residents}
-    if ns_residents is not None and not ns_residents.empty:
-        for _, row in ns_residents.iterrows():
-            resident_name = row["name"]
-            ns_date = pd.to_datetime(row["date"])
-            blackout.update_blackout(resident_name, [ns_date], ns_blackout, buffer_days=NS_buffer)
-            if optional_rules.get("NS_next_weekend_blockout", False):
-                next_week_friday = ns_date + pd.Timedelta(days=8)
-                blackout.update_blackout(resident_name, [next_week_friday], ns_blackout, buffer_days=1)
-            if optional_rules.get("NS_all_future_thursdays_blockout", False):
-                future_thursdays = nf_calendar_df.loc[
-                    (nf_calendar_df["date"] > ns_date) & (nf_calendar_df["date"].dt.weekday == 3), "date"
-                ].tolist()
-                if future_thursdays:
-                    blackout.update_blackout(resident_name, future_thursdays, ns_blackout)
+# ======================================================
+# NS
+# ======================================================
 
-    # ✅ Merge NS blackout into the combined blackout dictionary
-    for resident, dates in ns_blackout.items():
-        combined_blackout_dict.setdefault(resident, set()).update(dates)
+def ns_grayout_section(ns_df, rules, nf_calendar_df, buffers, combined_blackout_df, soft_grayouts):
+    """
+    Build NS grayouts (buffered days) for residents, 
+    skipping dates already in the combined hard blackout.
+    """
+    _, _, _, NS_buffer = buffers
 
-    # ✅ Rebuild the DataFrame after merging
-    combined_blackout_df = pd.DataFrame(
-        [{"name": r, "date": d} for r, dates in combined_blackout_dict.items() for d in dates]
+    for _, row in ns_df.iterrows():
+        name = row["name"]
+        d = pd.to_datetime(row["date"])
+
+        # Initialize soft_grayouts for resident if missing
+        if name not in soft_grayouts:
+            soft_grayouts[name] = set()
+
+        # Add buffered days around the NS date
+        for i in range(1, NS_buffer + 1):
+            for adj in (d - pd.Timedelta(days=i), d + pd.Timedelta(days=i)):
+                if adj not in combined_blackout_df.get(name, set()):
+                    soft_grayouts[name].add(adj)
+
+        # Optional rules
+        if rules.get("NS_next_weekend_blockout"):
+            future_date = d + pd.Timedelta(days=8)
+            if future_date not in combined_blackout_df.get(name, set()):
+                soft_grayouts[name].add(future_date)
+
+        if rules.get("NS_all_future_thursdays_blockout"):
+            thursdays = nf_calendar_df.loc[
+                (nf_calendar_df["date"] > d)
+                & (nf_calendar_df["date"].dt.weekday == 3),
+                "date",
+            ]
+            for t in thursdays:
+                if t not in combined_blackout_df.get(name, set()):
+                    soft_grayouts[name].add(t)
+
+    return soft_grayouts
+
+# ======================================================
+# HELPERS
+# ======================================================
+
+def combine_dicts(*dicts):
+    combined = {}
+    for d in dicts:
+        for r, dates in d.items():
+            combined.setdefault(r, set()).update(dates)
+    return combined
+
+def remove_soft_conflicts(soft, hard):
+    """Ensure grayouts never overlap blackouts."""
+    for r in soft:
+        if r in hard:
+            soft[r] -= hard[r]
+    return soft
+
+def dict_to_df(d):
+    return pd.DataFrame(
+        [{"name": r, "date": dt} for r, dates in d.items() for dt in dates]
     )
+
+def update_blackout(resident, dates, blackout_dict): 
+    for d in dates: 
+        blackout_range = pd.DatetimeIndex([d]) 
+        blackout_dict.setdefault(resident, set()).update(blackout_range) 

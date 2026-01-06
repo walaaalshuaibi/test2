@@ -13,8 +13,6 @@ def build_nf_calendar(residents_df, start_date, buffers=None, nf_cols=None):
 
     start_date = pd.Timestamp(start_date).normalize()
 
-    print(f"display start date: {start_date.year}")
-
     # --- Step 1: Collect all NF assignments per resident ---
     calendar = {}  # date -> list of resident names
     for _, row in residents_df.iterrows():
@@ -71,33 +69,28 @@ def build_nf_calendar(residents_df, start_date, buffers=None, nf_cols=None):
     return calendar_df
 
 
-def add_nf_day_preferences_seniors(
-    model,
-    assign,
-    roles,
-    days,
-    nf_residents
-):
+def add_nf_day_preferences_seniors(model, assign, roles, days, nf_residents):
     """
-    HARD CONSTRAINTS:
-    - NF residents cannot be assigned to ER-1 role.
-    - NF residents can only be assigned to DAY shifts on Tue / Thu.
-      (Day shifts on other weekdays are forbidden.)
+    HARD constraints:
+    - NF residents cannot be assigned to ER-1 roles
+    - If an NF resident has a DAY shift, it must be on Tuesday or Thursday
     """
-    preferred_days = {1, 3}  # Tuesday=1, Thursday=3
+
+    allowed_days = {1, 3}  # Tuesday=1, Thursday=3
 
     for r in nf_residents:
         for d in days:
             weekday = pd.to_datetime(d).weekday()
+
             for role in roles:
-                role_l = role.lower()
+                role_lower = role.lower()
 
                 # HARD: no ER-1 shifts for NF residents
-                if "er-1" in role_l:
+                if "er-1" in role_lower:
                     model.Add(assign[(d, role, r)] == 0)
 
-                # HARD: no day shifts outside Tue/Thu
-                if "day" in role_l and weekday not in preferred_days:
+                # HARD: forbid DAY shifts on non-Tue/Thu
+                elif "day" in role_lower and weekday not in allowed_days:
                     model.Add(assign[(d, role, r)] == 0)
 
 def add_nf_day_preferences_juniors(model, assign, roles, days, nf_residents):
