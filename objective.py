@@ -330,24 +330,24 @@ def extract_schedule(
         row = {
             "Name": r,
             "Total Shifts": day_shift_counts[r],
-            "Hard Day Shifts": hard_day_counts_per_res[r],
+            #"Hard Day Shifts": hard_day_counts_per_res[r],
             "Score": solver.Value(score_vars[r]) if solver is not None and score_vars and r in score_vars else schedule_dict.get(("score", r), None),
-            "Max Shifts": effective_max_shifts,
-            "Max Points": max_points.get(r) if isinstance(max_points, dict) else max_points,
+            #"Max Shifts": effective_max_shifts,
+            #"Max Points": max_points.get(r) if isinstance(max_points, dict) else max_points,
             "WR Count": wr_counts.get(r, 0),
             "NF Resident": "Yes" if night_counts.get(r, 0) > 2 else "No",
             "NS Resident": "Yes" if r in ns_names else "No",
-            "Year": resident_levels.get(r),
-            "WEEKEND ROLE": ", ".join(sorted(weekend_roles_per_res[r])),
-            "spacing_avg": spacing["avg_gap"],
-            "spacing_min": spacing["min_gap"],
-            "spacing_max": spacing["max_gap"],
-            "spacing_gaps_count": spacing["num_gaps"],
-            "spacing_overall_avg": spacing_overall["avg_gap"],
-            "spacing_overall_min": spacing_overall["min_gap"],
-            "spacing_overall_max": spacing_overall["max_gap"],
-            "spacing_overall_gaps_count": spacing_overall["num_gaps"],
-            "NS Role": ns_role_map.get(r, "")
+            "Year": resident_levels.get(r)
+            #"WEEKEND ROLE": ", ".join(sorted(weekend_roles_per_res[r])),
+            #"spacing_avg": spacing["avg_gap"],
+            #"spacing_min": spacing["min_gap"],
+            #"spacing_max": spacing["max_gap"],
+            #"spacing_gaps_count": spacing["num_gaps"],
+            #"spacing_overall_avg": spacing_overall["avg_gap"],
+            #"spacing_overall_min": spacing_overall["min_gap"],
+            #"spacing_overall_max": spacing_overall["max_gap"],
+            #"spacing_overall_gaps_count": spacing_overall["num_gaps"],
+            #"NS Role": ns_role_map.get(r, "")
         }
 
         for wd in weekday_order:
@@ -356,7 +356,7 @@ def extract_schedule(
         for role in roles:
             row[f"role_{role}_count"] = role_counts[r][role]
 
-        scores_rows.append(row)
+        #scores_rows.append(row)
 
     scores_df = pd.DataFrame(scores_rows)
 
