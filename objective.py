@@ -350,13 +350,13 @@ def extract_schedule(
             #"NS Role": ns_role_map.get(r, "")
         }
 
-        for wd in weekday_order:
-            row[f"{wd}_shifts"] = weekday_counts_per_res[r][wd]
+        # for wd in weekday_order:
+        #     row[f"{wd}_shifts"] = weekday_counts_per_res[r][wd]
 
-        for role in roles:
-            row[f"role_{role}_count"] = role_counts[r][role]
+        # for role in roles:
+        #     row[f"role_{role}_count"] = role_counts[r][role]
 
-        #scores_rows.append(row)
+        scores_rows.append(row)
 
     scores_df = pd.DataFrame(scores_rows)
 
