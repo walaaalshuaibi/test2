@@ -375,7 +375,3 @@ def assert_penalties(name, penalties):
             raise TypeError(f"{name} contains non-var: {p}")
 
     print(f"✅ {name}: {len(penalties)} penalties")
-
-def debug_penalties(name, penalties):
-    bad = [p for p in penalties if p is None]
-    print(f"{name}: {len(penalties)} penalties, {len(bad)} None values")

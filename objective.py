@@ -107,14 +107,14 @@ def build_objective(
     model.Minimize(sum(terms))
 
 def minimize_and_fix(model, solver, penalties):
-    if penalties is None:
+    if not penalties:
         return  # ✅ THIS IS REQUIRED
 
-    obj = penalties
+    obj = sum(penalties)
     model.Minimize(obj)
     solver.Solve(model)
 
-    best = solver.Value(penalties) 
+    best = sum(solver.Value(p) for p in penalties)
     model.Add(obj == best)
 
 def extract_schedule(

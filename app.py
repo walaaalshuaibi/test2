@@ -434,7 +434,7 @@ with tab2:
                     try:
                         limited_shift_residents, off_days, on_days = build_constraints_from_session()
 
-                        scheduler_result = schedule_with_ortools_full_modular(
+                        schedule_df, scores_df = schedule_with_ortools_full_modular(
                             st.session_state["residents_df"],
                             start_date,
                             num_weeks,
@@ -449,11 +449,6 @@ with tab2:
                             preassigned_ns_df=preassigned_ns_df,
                             preassigned_wr_df=preassigned_wr_df
                         )
-
-                        if scheduler_result is None:
-                            raise RuntimeError("No feasible solution found")
-                        
-                        schedule_df, scores_df = scheduler_result
 
                         st.session_state["schedule_df"] = schedule_df
                         st.session_state["scores_df"] = scores_df

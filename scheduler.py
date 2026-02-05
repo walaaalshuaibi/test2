@@ -118,8 +118,8 @@ def schedule_with_ortools_full_modular(
     # 7. Solve the model
     # -----------------------------------------------------
 
-    USER_NF_CAP = 10
-    USER_NON_NF_CAP = 12
+    USER_NF_CAP = 1
+    USER_NON_NF_CAP = 6
 
     nf_cap = USER_NF_CAP + 2
     non_nf_cap = USER_NON_NF_CAP + 2
@@ -259,18 +259,18 @@ def schedule_with_ortools_full_modular(
         fixed_preassigned = helper.build_fixed_preassigned(nf_calendar_df, ns_residents, wr_residents, preassigned_ns_df, preassigned_wr_df)   
         # NF minimum spacing
 
-        #print("THIS IS NF")
-        #print(nf_residents)
+        print("THIS IS NF")
+        print(nf_residents)
         spacing_nf_soft_penalties = general.add_minimum_spacing_soft_constraint(model, assign, days, day_roles, nf_residents, fixed_preassigned, min_gap=9)
         helper.assert_penalties("spacing_nf_soft_penalties", spacing_nf_soft_penalties)
         # NS minimum spacing
-        #print("THIS IS NS")
+        print("THIS IS NS")
         print(set(ns_residents['name']))
         spacing_ns_soft_penalties = general.add_minimum_spacing_soft_constraint(model, assign, days, day_roles, set(ns_residents['name']), fixed_preassigned, min_gap=7)
         helper.assert_penalties("spacing_ns_soft_penalties", spacing_ns_soft_penalties)
         # WR minimum spacing
         spacing_wr_soft_penalties = general.add_minimum_spacing_soft_constraint(model, assign, days, day_roles, set(wr_residents['name']), fixed_preassigned, min_gap=9)
-        helper.assert_penalties("spacing_wr_soft_penalties", spacing_wr_soft_penalties)
+        helper.assert_penalties("spacing_ns_soft_penalties", spacing_wr_soft_penalties)
         # The rest minimum spacing
         non_nf_for_spacing = [r for r in non_nf_residents if r not in set(ns_residents['name']) and r not in set(wr_residents['name'])]
         spacing_nonnf_soft_penalties = general.add_minimum_spacing_soft_constraint(model, assign, days, day_roles, non_nf_for_spacing, fixed_preassigned, min_gap=5)
@@ -307,7 +307,6 @@ def schedule_with_ortools_full_modular(
         MAX_TRIES = 3
         solver = cp_model.CpSolver()
         status = None
-        found_solution = False
 
         for attempt in range(1, MAX_TRIES + 1):
             st.write(f"🔁 Solver attempt {attempt}/{MAX_TRIES}")  
@@ -323,18 +322,18 @@ def schedule_with_ortools_full_modular(
             objective.minimize_and_fix(
                 model,
                 solver,
-                sum(non_nf_balance_penalties) + sum(hard_max_penalties)
+                non_nf_balance_penalties + hard_max_penalties
             )
 
             # PHASE 2: NF BALANCE + SPACING # VALIDATED
             objective.minimize_and_fix(
                 model,
                 solver,
-                sum(nf_balance_penalties) +
-                sum(spacing_nonnf_soft_penalties) +
-                sum(spacing_nf_soft_penalties) +
-                sum(spacing_ns_soft_penalties) +
-                2*sum(spacing_wr_soft_penalties)
+                nf_balance_penalties +
+                spacing_nonnf_soft_penalties +
+                spacing_nf_soft_penalties +
+                spacing_ns_soft_penalties +
+                2*spacing_wr_soft_penalties
             )
 
             # PHASE 3: DIVERSITY
@@ -380,28 +379,11 @@ def schedule_with_ortools_full_modular(
             actual_violations = sum(solver.Value(p) for p in spacing_wr_soft_penalties)
             print(f"Actual WR SPACING violations in solution: {actual_violations}")
 
-            helper.debug_penalties("nf_day_pref_penalties", nf_day_pref_penalties)
-            helper.debug_penalties("role_pref_penalties", role_pref_penalties)
-            helper.debug_penalties("diverse_day_penalties", diverse_day_penalties)
-            helper.debug_penalties("diverse_role_penalties", diverse_role_penalties)
-            helper.debug_penalties("hard_max_penalties", hard_max_penalties)
-            helper.debug_penalties("spacing_nf_soft_penalties", spacing_nf_soft_penalties)
-            helper.debug_penalties("spacing_nonnf_soft_penalties", spacing_nonnf_soft_penalties)
-            helper.debug_penalties("spacing_ns_soft_penalties", spacing_ns_soft_penalties)
-            helper.debug_penalties("spacing_wr_soft_penalties", spacing_wr_soft_penalties)
-
             if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
                 st.success(f"✅ Feasible solution found on attempt {attempt}")
-                found_solution = True
                 break
             else:
                 st.warning(f"❌ No feasible solution on attempt {attempt}")
-
-        # ---- AFTER ALL ATTEMPTS ----
-        if not found_solution:
-            st.error("🚫 No feasible solution found after all attempts")
-            raise RuntimeError("No feasible solution found")
-            #return None, None   # or just stop gracefully
 
         if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
 
