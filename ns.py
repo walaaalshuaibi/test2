@@ -78,6 +78,8 @@ def fill_ns_cells(
                     continue
 
                 if resident_year == "r1":
+                    print("THIS IS JUNIORS")
+                    print(sorted_juniors)
                     assigned = assign_ns_juniors(
                         date, candidates, blackout_df, nf_assigned, sorted_juniors)                                
                     

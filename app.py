@@ -1,4 +1,5 @@
 # app.py
+import numpy as np
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -198,52 +199,54 @@ with tab2:
         # ---------------------------
         # Regular Resident Limits
         # ---------------------------
-        # st.subheader("👤 Regular Resident Limits")
-        # col1, col2, col3 = st.columns([3,3,1])
-        # with col1:
-        #     res_shift_max = st.number_input(
-        #         "Max Shifts",
-        #         min_value=0,
-        #         step=1,
-        #         value=st.session_state.get("res_shift_max_input", DEFAULTS["res_shift_max"]),
-        #         key="res_shift_max_input"
-        #     )
-        # with col2:
-        #     res_points_max = st.number_input(
-        #         "Max Points",
-        #         min_value=0,
-        #         step=1,
-        #         value=st.session_state.get("res_points_max_input", DEFAULTS["res_points_max"]),
-        #         key="res_points_max_input"
-        #     )
-        # with col3:
-        #     st.button("🔄 Restore Defaults", on_click=restore_regular_defaults, key="restore_regular_limits")
-        # resident_max_limit = (int(res_shift_max), int(res_points_max))
+        st.subheader("👤 Regular Resident Limits")
+        col1, col2, col3 = st.columns([3,3,1])
+        with col1:
+            res_shift_max = st.number_input(
+                "Max Shifts",
+                min_value=0,
+                step=1,
+                value=st.session_state.get("res_shift_max_input", DEFAULTS["res_shift_max"]),
+                key="res_shift_max_input"
+            )
+        with col2:
+            res_points_max = st.number_input(
+                "Max Points",
+                min_value=0,
+                step=1,
+                value=st.session_state.get("res_points_max_input", DEFAULTS["res_points_max"]),
+                key="res_points_max_input"
+            )
+        with col3:
+            st.button("🔄 Restore Defaults", on_click=restore_regular_defaults, key="restore_regular_limits")
+   
+        resident_max_limit = (int(res_shift_max), int(res_points_max))
 
         # ---------------------------
         # Night Float (NF) Limits
         # ---------------------------
-        # st.subheader("🧠 Night Float (NF) Limits")
-        # col1, col2, col3 = st.columns([3,3,1])
-        # with col1:
-        #     nf_shift_max = st.number_input(
-        #         "Max NF Shifts",
-        #         min_value=0,
-        #         step=1,
-        #         value=st.session_state.get("nf_shift_max_input", DEFAULTS["nf_shift_max"]),
-        #         key="nf_shift_max_input"
-        #     )
-        # with col2:
-        #     nf_points_max = st.number_input(
-        #         "Max NF Points",
-        #         min_value=0,
-        #         step=1,
-        #         value=st.session_state.get("nf_points_max_input", DEFAULTS["nf_points_max"]),
-        #         key="nf_points_max_input"
-        #     )
-        # with col3:
-        #     st.button("🔄 Restore Defaults", on_click=restore_nf_defaults, key="restore_nf_limits")
-        # nf_max_limit = (int(nf_shift_max), int(nf_points_max))
+        st.subheader("🧠 Night Float (NF) Limits")
+        col1, col2, col3 = st.columns([3,3,1])
+        with col1:
+            nf_shift_max = st.number_input(
+                "Max NF Shifts",
+                min_value=0,
+                step=1,
+                value=st.session_state.get("nf_shift_max_input", DEFAULTS["nf_shift_max"]),
+                key="nf_shift_max_input"
+            )
+        with col2:
+            nf_points_max = st.number_input(
+                "Max NF Points",
+                min_value=0,
+                step=1,
+                value=st.session_state.get("nf_points_max_input", DEFAULTS["nf_points_max"]),
+                key="nf_points_max_input"
+            )
+        with col3:
+            st.button("🔄 Restore Defaults", on_click=restore_nf_defaults, key="restore_nf_limits")
+  
+        nf_max_limit = (int(nf_shift_max), int(nf_points_max))
 
         # ---------------------------
         # Buffers (2x2 layout)
@@ -417,14 +420,12 @@ with tab2:
             )
         
         resident_max_limit = (
-            int(DEFAULTS["res_shift_max"]),
-            int(DEFAULTS["res_points_max"]),
-        )
+            int(res_shift_max), 
+            int(res_points_max),)
 
         nf_max_limit = (
-            int(DEFAULTS["nf_shift_max"]),
-            int(DEFAULTS["nf_points_max"]),
-        )
+            int(nf_shift_max),
+            int(nf_points_max),)
         
         if st.button("Run Scheduler 🚀", key="run_scheduler"):
             if start_date is None:
@@ -434,7 +435,7 @@ with tab2:
                     try:
                         limited_shift_residents, off_days, on_days = build_constraints_from_session()
 
-                        schedule_df, scores_df = schedule_with_ortools_full_modular(
+                        scheduler_result = schedule_with_ortools_full_modular(
                             st.session_state["residents_df"],
                             start_date,
                             num_weeks,
@@ -449,6 +450,11 @@ with tab2:
                             preassigned_ns_df=preassigned_ns_df,
                             preassigned_wr_df=preassigned_wr_df
                         )
+
+                        if scheduler_result is None:
+                            raise RuntimeError("No feasible solution found")
+                        
+                        schedule_df, scores_df = scheduler_result
 
                         st.session_state["schedule_df"] = schedule_df
                         st.session_state["scores_df"] = scores_df

@@ -107,14 +107,14 @@ def build_objective(
     model.Minimize(sum(terms))
 
 def minimize_and_fix(model, solver, penalties):
-    if not penalties:
+    if penalties is None:
         return  # ✅ THIS IS REQUIRED
 
-    obj = sum(penalties)
+    obj = penalties
     model.Minimize(obj)
     solver.Solve(model)
 
-    best = sum(solver.Value(p) for p in penalties)
+    best = solver.Value(penalties) 
     model.Add(obj == best)
 
 def extract_schedule(
@@ -157,6 +157,8 @@ def extract_schedule(
     # -----------------------------
     weekday_order = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     hard_days = {"Tue", "Thu", "Fri", "Sat"}
+
+    schedule_dict = schedule_dict or {}
 
     schedule = []
 

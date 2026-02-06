@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 import re
+import numpy as np
 from openpyxl import load_workbook
 import pandas as pd
 import random
@@ -191,7 +192,7 @@ def calculate_max_limits(residents, nf_residents, resident_max_limit, nf_max_lim
     Calculate maximum shifts, points, and weekend limits for each resident.
     A resident is treated as NF only if they have more than 2 NF nights.
     """
-    max_shifts, max_points, weekend_limits = {}, {}, {}
+    max_shifts, max_points = {}, {}
 
     for resident in residents:
 
@@ -208,9 +209,8 @@ def calculate_max_limits(residents, nf_residents, resident_max_limit, nf_max_lim
         # Store
         max_shifts[resident] = shifts
         max_points[resident] = points
-        weekend_limits[resident] = weekend
 
-    return max_shifts, max_points, weekend_limits
+    return max_shifts, max_points
 
 
 def build_fixed_preassigned(nf_calendar_df,
@@ -355,14 +355,28 @@ def read_excel_as_displayed(path, sheet_name=0):
         row_data = {}
         for h, cell in zip(headers, row):
             if cell.is_date and cell.value is not None:
-                # Format all Excel dates as '23 Nov'
                 value = cell.value.strftime("%d %b")
             else:
                 value = cell.value
+
+            # Normalize all weird Excel values
+            if value in [None, "", float("nan")]:
+                value = None
+
             row_data[h] = value
+
         data.append(row_data)
 
-    return pd.DataFrame(data)
+    df = pd.DataFrame(data)
+
+    # Replace any remaining NaN/NaT/inf
+    df = df.replace([np.nan, np.inf, -np.inf], None)
+
+    # Drop empty rows/cols
+    df = df.dropna(how='all')
+    df = df.dropna(axis=1, how="all")
+
+    return df
 
 # DEBUG
 def assert_penalties(name, penalties):
@@ -375,3 +389,7 @@ def assert_penalties(name, penalties):
             raise TypeError(f"{name} contains non-var: {p}")
 
     print(f"✅ {name}: {len(penalties)} penalties")
+
+def debug_penalties(name, penalties):
+    bad = [p for p in penalties if p is None]
+    print(f"{name}: {len(penalties)} penalties, {len(bad)} None values")

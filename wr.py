@@ -121,8 +121,9 @@ def build_weekend_round_assignments(residents_df, start_date, resident_year, r2_
     # --- Collect all valid date ranges per resident ---
     all_ranges = []  # list of (resident_name, [dates in one range])
     for _, row in residents_df.iterrows():
-        resident_name = row["name"].strip()
-        wr_field = str(row.get("weekend round", "")).strip().lower()
+        if row["name"] is not None:
+            resident_name = row["name"].strip()
+            wr_field = str(row.get("weekend round", "")).strip().lower()
 
         if not wr_field or wr_field == "no":
             continue

@@ -93,6 +93,36 @@ def add_nf_day_preferences_seniors(model, assign, roles, days, nf_residents):
                 elif "day" in role_lower and weekday not in allowed_days:
                     model.Add(assign[(d, role, r)] == 0)
 
+def add_nf_day_preferences_seniors_soft(model, assign, roles, days, nf_residents):
+    """
+    Soft constraint:
+    - NF *should* work Day only on Tue/Thu
+    - Day shifts on Mon/Wed/Fri/Sat/Sun incur a penalty
+    - Returns IntVar penalty list (0 or 1), no weights applied here
+    """
+
+    penalties = []
+    allowed_days = {1, 3}  # Tue=1, Thu=3
+
+    for r in nf_residents:
+        for d in days:
+            weekday = pd.to_datetime(d).weekday()
+            for role in roles:
+                if "day" in role.lower():
+                    penalty_var = model.NewIntVar(0, 1, f"nf_soft_penalty_{d}_{role}_{r}")
+
+                    if weekday not in allowed_days:
+                        # Penalty is 1 if assigned on a discouraged day
+                        # assign <= penalty ensures penalty captures assignment
+                        model.Add(assign[(d, role, r)] <= penalty_var)
+                    else:
+                        # Allowed day — no penalty
+                        model.Add(penalty_var == 0)
+
+                    penalties.append(penalty_var)
+
+    return penalties
+
 def add_nf_day_preferences_juniors(model, assign, roles, days, nf_residents):
     """
     - Hard constraints, NF residents should avoid Tuesday and Thursday

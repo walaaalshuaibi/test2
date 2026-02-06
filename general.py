@@ -63,8 +63,7 @@ def add_blackout_constraints(model, assign, roles, combined_blackout_df, soft_gr
 
 def add_shift_cap_constraints(
     model, assign, days, roles, residents, 
-    max_shifts, max_points, weekend_days, weekend_limits, 
-    score_vars):
+    max_shifts, max_points, score_vars):
     """ 
     Add constraints to enforce per-resident limits: 
     1. Minimum and maximum total shifts 
@@ -434,42 +433,33 @@ def balanced_rotation_penalty(model, assign, days, roles, residents, ns_resident
 
     return penalties 
 
-def add_role_preferences_by_level(model, assign, roles, days, residents, resident_levels, nf_residents):
-
+def add_role_preferences_by_level(model, assign, roles, days, residents, resident_levels):
     penalties = []
 
-    # Preferred weekend roles
     preferred = {
-        "r4": ["er-2 day","ew day"],
-        "r3": ["er-1 day","ew day"]
+        "R4": ["er-2 day", "ew day"],
+        "R3": ["er-1 day", "ew day"]
     }
 
     for r in residents:
         level = resident_levels.get(r, "").strip().upper()
 
         for d in days:
-            d_dt = pd.to_datetime(d) if isinstance(d, str) else d
-            is_weekend = d_dt.weekday() in [4, 5]  # Fri/Sat
-
-            if not is_weekend:
+            d_dt = pd.to_datetime(d)
+            if d_dt.weekday() not in [4, 5]:  # Fri/Sat only
                 continue
 
             for role in roles:
-                role_lower = role.strip().lower()
-
-                # Determine if this role is preferred
-                is_preferred = role_lower in preferred.get(level, [])
-
-                # Create penalty: 1 if assigned to NON-preferred role
                 penalty = model.NewIntVar(0, 1, f"pref_penalty_{r}_{d}_{role}")
 
-                # If assigned AND role is not preferred → penalty = 1
+                is_preferred = role.lower() in preferred.get(level, [])
+
                 if is_preferred:
-                    model.Add(assign[(d, role, r)] == 1).OnlyEnforceIf(penalty.Not())
-                    #model.Add(assign[(d, role, r)] == 0).OnlyEnforceIf(penalty)
+                    # Assigned use preferred -> penalty must be 0
+                    model.Add(assign[(d, role, r)] == 0).OnlyEnforceIf(penalty)
                 else:
-                    model.Add(assign[(d, role, r)] == 1).OnlyEnforceIf(penalty)
-                    #model.Add(assign[(d, role, r)] == 0).OnlyEnforceIf(penalty.Not())
+                    # If assigned AND not preferred, penalty must = 1
+                    model.Add(assign[(d, role, r)] <= penalty)
 
                 penalties.append(penalty)
 
