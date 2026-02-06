@@ -315,7 +315,7 @@ def schedule_with_ortools_full_modular(
             solver.parameters.max_time_in_seconds = 30
             solver.parameters.random_seed = random.randint(1, 1_000_000)
             solver.parameters.num_search_workers = 16
-            solver.parameters.use_lns = True
+            # solver.parameters.use_lns = True
             solver.parameters.search_branching = cp_model.PORTFOLIO_SEARCH
 
             # PHASE 1: HARD FAIRNESS (NO TRADE-OFF)
