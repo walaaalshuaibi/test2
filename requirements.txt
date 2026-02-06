@@ -1,5 +1,5 @@
 pandas
 ortools
-streamlit
 openpyxl
+streamlit==1.32.0
 protobuf==3.20.3
