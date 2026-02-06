@@ -2,3 +2,4 @@ pandas
 ortools
 streamlit
 openpyxl
+protobuf==3.20.3
