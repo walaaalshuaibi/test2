@@ -301,15 +301,16 @@ def schedule_with_ortools_full_modular(
         sum(spacing_ns_soft_penalties) +
         sum(spacing_wr_soft_penalties))
     
-    model.Minimize(
-        # model,
-        # solver,
+    objective.minimize_and_fix(
+        model,
+        solver,
         sum(spacing_nonnf_soft_penalties) +
         sum(spacing_nf_soft_penalties) )
 
     # PHASE 3: PREFERENCE
-    # model.Minimize(
-    #     sum(role_pref_penalties) + sum(nf_day_pref_penalty))
+    model.Minimize(
+        # sum(role_pref_penalties) + 
+        sum(nf_day_pref_penalty))
 
     status = solver.Solve(model)
 
